@@ -126,11 +126,6 @@
 
 MIT License — см. файл [LICENSE](LICENSE)
 
-## 💬 Поддержка
-
-- [Открыть Issue](https://github.com/YOUR_USERNAME/wparty-auto/issues)
-- [Обсуждения](https://github.com/YOUR_USERNAME/wparty-auto/discussions)
-
 ---
 
 ⭐ Если скрипт полезен — поставьте звезду!
