@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WPARTY - Автоматическое переключение серий
 // @namespace    https://github.com/DdepRest/wparty-auto-
-// @version      4.0.0
+// @version      4.0.1
 // @description  Автоматически переключает серии на WPARTY с умным пропуском титров, статистикой просмотра и списком сериалов
 // @author       DdepRest
 // @license      MIT
@@ -14,6 +14,8 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_listValues
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @updateURL    https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
 // @downloadURL  https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
 // @supportURL   https://github.com/DdepRest/wparty-auto-/issues
@@ -43,6 +45,12 @@
     const CHECK_INTERVAL = 1000;
     const WATCH_TIME_INTERVAL = 10000;
     const TRUSTED_ORIGINS = ['wparty.net', 'stloadi.live'];
+
+    const VERSION_INFO = {
+        current: '4.0.1',
+        releaseDate: '2025-01-27',
+        changelog: 'Добавлен индикатор версии и проверка обновлений'
+    };
 
     // ============ СОСТОЯНИЕ ============
     let hasTriggered = false;
@@ -166,6 +174,92 @@
 
     function isTrustedOrigin(origin) {
         return TRUSTED_ORIGINS.some(domain => origin.includes(domain));
+    }
+
+    // ============ ПРОВЕРКА ОБНОВЛЕНИЙ ============
+    function checkForUpdates() {
+        try {
+            const lastCheck = GM_getValue('lastUpdateCheck', 0);
+            const now = Date.now();
+            
+            // Проверяем не чаще раза в день
+            if (now - lastCheck < 86400000) {
+                log('⏳ Проверка обновлений: слишком рано');
+                return;
+            }
+            
+            GM_setValue('lastUpdateCheck', now);
+            log('🔍 Проверяю обновления...');
+            
+            if (typeof GM_xmlhttpRequest !== 'undefined') {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: 'https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js',
+                    onload: function(response) {
+                        if (response.status === 200) {
+                            const match = response.responseText.match(/@version\s+([\d.]+)/);
+                            if (match) {
+                                const remoteVersion = match[1];
+                                log(`📦 Текущая версия: ${VERSION_INFO.current}, на сервере: ${remoteVersion}`);
+                                
+                                if (compareVersions(remoteVersion, VERSION_INFO.current) > 0) {
+                                    showNotification(`🆕 Доступна версия ${remoteVersion}!`, 'info', 5000);
+                                    GM_setValue('updateAvailable', remoteVersion);
+                                    updateVersionBadge(remoteVersion);
+                                } else {
+                                    GM_setValue('updateAvailable', null);
+                                    log('✅ У вас актуальная версия');
+                                }
+                            }
+                        }
+                    },
+                    onerror: function() {
+                        log('⚠️ Не удалось проверить обновления');
+                    }
+                });
+            } else {
+                // Fallback на fetch
+                fetch('https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js')
+                    .then(r => r.text())
+                    .then(text => {
+                        const match = text.match(/@version\s+([\d.]+)/);
+                        if (match) {
+                            const remoteVersion = match[1];
+                            if (compareVersions(remoteVersion, VERSION_INFO.current) > 0) {
+                                showNotification(`🆕 Доступна версия ${remoteVersion}!`, 'info', 5000);
+                                GM_setValue('updateAvailable', remoteVersion);
+                                updateVersionBadge(remoteVersion);
+                            }
+                        }
+                    })
+                    .catch(() => {
+                        log('⚠️ Не удалось проверить обновления (fetch)');
+                    });
+            }
+        } catch(e) {
+            log('⚠️ Ошибка при проверке обновлений: ' + e.message);
+        }
+    }
+
+    function compareVersions(v1, v2) {
+        const parts1 = v1.split('.').map(Number);
+        const parts2 = v2.split('.').map(Number);
+        
+        for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+            const p1 = parts1[i] || 0;
+            const p2 = parts2[i] || 0;
+            if (p1 > p2) return 1;
+            if (p1 < p2) return -1;
+        }
+        return 0;
+    }
+
+    function updateVersionBadge(newVersion) {
+        const updateStatus = document.getElementById('wp-update-status');
+        if (updateStatus) {
+            updateStatus.innerHTML = `🆕 Доступно обновление: v${newVersion} <a href="https://github.com/DdepRest/wparty-auto-" target="_blank" style="color: #667eea;">Обновить</a>`;
+            updateStatus.style.color = '#f5576c';
+        }
     }
 
     // ============ АДАПТИВНЫЙ ПРОПУСК ТИТРОВ ============
@@ -992,6 +1086,20 @@
                     color: #667eea;
                     text-decoration: none;
                 }
+                .wp-version a:hover {
+                    text-decoration: underline;
+                }
+                #wp-update-status {
+                    margin-top: 5px;
+                    font-size: 9px;
+                }
+                #wp-update-status a {
+                    color: #667eea;
+                    text-decoration: none;
+                }
+                #wp-update-status a:hover {
+                    text-decoration: underline;
+                }
             </style>
             <div class="wp-header">
                 <div class="wp-title">🎬 WPARTY Auto</div>
@@ -1162,8 +1270,9 @@
                 </div>
 
                 <div class="wp-version">
-                    WPARTY Auto v4.0.0 • 
+                    <span id="wp-version-badge">WPARTY Auto v${VERSION_INFO.current}</span> • 
                     <a href="https://github.com/DdepRest/wparty-auto-" target="_blank">GitHub</a>
+                    <div id="wp-update-status"></div>
                 </div>
             </div>
         `;
@@ -1224,6 +1333,17 @@
 
         updateWatchTimeDisplay();
         updateAdaptiveSkipDisplay();
+
+        // Проверка обновлений
+        checkForUpdates();
+
+        // Показать информацию об обновлении, если есть
+        try {
+            const updateAvailable = GM_getValue('updateAvailable', null);
+            if (updateAvailable && compareVersions(updateAvailable, VERSION_INFO.current) > 0) {
+                updateVersionBadge(updateAvailable);
+            }
+        } catch(e) {}
     }
 
     function updateStatusPanel(status, progress = null) {
@@ -1713,7 +1833,8 @@
     function init() {
         settings = loadSettings();
 
-        log('=== Версия 4.0.0 ===');
+        log(`=== Версия ${VERSION_INFO.current} (${VERSION_INFO.releaseDate}) ===`);
+        log(`📝 ${VERSION_INFO.changelog}`);
         log(`⚙️ Настройки: титры=${settings.skipCredits}, секунд=${settings.skipSeconds}, авто=${settings.autoNext}`);
         log(`⚙️ Автовключение: ${settings.autoPlay}, осталось=${autoPlayRemaining}`);
         log(`⚙️ Адаптивный пропуск: ${settings.adaptiveSkip}`);
