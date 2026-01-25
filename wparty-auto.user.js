@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         WPARTY - Автоматическое переключение серий
-// @namespace    https://github.com/YOUR_USERNAME/wparty-auto
+// @namespace    https://github.com/DdepRest/wparty-auto-
 // @version      4.0.0
 // @description  Автоматически переключает серии на WPARTY с умным пропуском титров, статистикой просмотра и списком сериалов
-// @author       YOUR_USERNAME
+// @author       DdepRest
 // @license      MIT
 // @match        *://wparty.net/*
 // @match        *://*.stloadi.live/*
@@ -14,10 +14,10 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_listValues
-// @updateURL    https://raw.githubusercontent.com/YOUR_USERNAME/wparty-auto/main/wparty-auto.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_USERNAME/wparty-auto/main/wparty-auto.user.js
-// @supportURL   https://github.com/YOUR_USERNAME/wparty-auto/issues
-// @homepageURL  https://github.com/YOUR_USERNAME/wparty-auto
+// @updateURL    https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
+// @downloadURL  https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
+// @supportURL   https://github.com/DdepRest/wparty-auto-/issues
+// @homepageURL  https://github.com/DdepRest/wparty-auto-
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=wparty.net
 // ==/UserScript==
 
@@ -36,12 +36,12 @@
         autoPlay: false,
         autoPlayCount: 0,
         autoPlayDelay: 5,
-        adaptiveSkip: true,      // Адаптивный пропуск титров
-        trackWatchTime: true     // Отслеживание времени просмотра
+        adaptiveSkip: true,
+        trackWatchTime: true
     };
 
     const CHECK_INTERVAL = 1000;
-    const WATCH_TIME_INTERVAL = 10000; // Обновлять время просмотра каждые 10 сек
+    const WATCH_TIME_INTERVAL = 10000;
     const TRUSTED_ORIGINS = ['wparty.net', 'stloadi.live'];
 
     // ============ СОСТОЯНИЕ ============
@@ -61,7 +61,6 @@
     }
 
     function generateShowId() {
-        // Генерируем уникальный ID для сериала на основе URL
         const path = window.location.pathname;
         const match = path.match(/\/(\d+)/);
         if (match) return match[1];
@@ -187,7 +186,6 @@
             const allCredits = GM_getValue('showCredits', {});
             const existing = allCredits[currentShowId];
             
-            // Усредняем с предыдущими данными для точности
             if (existing) {
                 const samples = existing.samples || 1;
                 const avgSeconds = Math.round(
@@ -195,7 +193,7 @@
                 );
                 allCredits[currentShowId] = {
                     seconds: avgSeconds,
-                    samples: Math.min(samples + 1, 10), // Макс 10 образцов
+                    samples: Math.min(samples + 1, 10),
                     showName: getShowName(),
                     lastUpdated: Date.now()
                 };
@@ -264,7 +262,6 @@
             data[today].shows[currentShowId].time += seconds;
         }
         
-        // Очищаем старые данные (старше 30 дней)
         const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
         Object.keys(data).forEach(date => {
             if (new Date(date).getTime() < cutoff) {
@@ -445,7 +442,6 @@
     }
 
     function createShowListModal() {
-        // Удаляем существующий
         document.getElementById('wparty-showlist-modal')?.remove();
         
         const history = getWatchHistory();
@@ -638,19 +634,6 @@
                     font-size: 48px;
                     margin-bottom: 15px;
                 }
-                .wp-progress-bar {
-                    height: 4px;
-                    background: rgba(255,255,255,0.1);
-                    border-radius: 2px;
-                    margin-top: 8px;
-                    overflow: hidden;
-                }
-                .wp-progress-fill {
-                    height: 100%;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    border-radius: 2px;
-                    transition: width 0.3s;
-                }
             </style>
             <div class="wp-modal-content">
                 <div class="wp-modal-header">
@@ -712,7 +695,6 @@
         document.body.appendChild(modal);
         showListOpen = true;
         
-        // Закрытие
         modal.querySelector('.wp-modal-close').addEventListener('click', () => {
             modal.remove();
             showListOpen = false;
@@ -725,7 +707,6 @@
             }
         });
         
-        // Действия
         modal.querySelectorAll('.wp-show-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -741,7 +722,6 @@
             });
         });
         
-        // Клик на карточку
         modal.querySelectorAll('.wp-show-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 if (!e.target.closest('.wp-show-btn')) {
@@ -966,10 +946,6 @@
                     padding: 4px 10px;
                     font-size: 11px;
                 }
-                .wp-btn-full {
-                    width: 100%;
-                    margin-top: 10px;
-                }
                 .wp-autoplay-info {
                     background: rgba(56, 239, 125, 0.15);
                     border-left: 3px solid #38ef7d;
@@ -1012,6 +988,10 @@
                     padding-top: 10px;
                     border-top: 1px solid rgba(255,255,255,0.05);
                 }
+                .wp-version a {
+                    color: #667eea;
+                    text-decoration: none;
+                }
             </style>
             <div class="wp-header">
                 <div class="wp-title">🎬 WPARTY Auto</div>
@@ -1021,11 +1001,8 @@
                 </div>
             </div>
             <div class="wp-content">
-                <!-- Время просмотра -->
                 <div class="wp-section">
-                    <div class="wp-section-title">
-                        <span>⏱️ Время просмотра</span>
-                    </div>
+                    <div class="wp-section-title">⏱️ Время просмотра</div>
                     <div class="wp-time-stats">
                         <div class="wp-time-card">
                             <div class="wp-time-value" id="wp-time-today">0</div>
@@ -1038,7 +1015,6 @@
                     </div>
                 </div>
 
-                <!-- Автопереключение -->
                 <div class="wp-section">
                     <div class="wp-section-title">Автопереключение</div>
                     <div class="wp-option">
@@ -1063,7 +1039,6 @@
                     </div>
                 </div>
 
-                <!-- Автовключение серий -->
                 <div class="wp-section">
                     <div class="wp-section-title">🎯 Автовключение серий</div>
                     <div class="wp-option">
@@ -1106,7 +1081,6 @@
                     </div>
                 </div>
 
-                <!-- Пропуск титров -->
                 <div class="wp-section">
                     <div class="wp-section-title">Пропуск титров</div>
                     <div class="wp-option">
@@ -1152,7 +1126,6 @@
                     </div>
                 </div>
 
-                <!-- Интерфейс -->
                 <div class="wp-section">
                     <div class="wp-section-title">Интерфейс</div>
                     <div class="wp-option">
@@ -1177,7 +1150,6 @@
                     </div>
                 </div>
 
-                <!-- Статус -->
                 <div class="wp-status" id="wp-status">
                     <div class="wp-status-row">
                         <span class="wp-status-label">Статус:</span>
@@ -1191,29 +1163,20 @@
 
                 <div class="wp-version">
                     WPARTY Auto v4.0.0 • 
-                    <a href="https://github.com/YOUR_USERNAME/wparty-auto" target="_blank" style="color: #667eea; text-decoration: none;">GitHub</a>
+                    <a href="https://github.com/DdepRest/wparty-auto-" target="_blank">GitHub</a>
                 </div>
             </div>
         `;
 
         document.body.appendChild(panel);
 
-        // Обработчики событий
-        const header = panel.querySelector('.wp-header');
         const toggleBtn = panel.querySelector('.wp-toggle-btn');
         
         toggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             panel.classList.toggle('collapsed');
         });
-        
-        header.addEventListener('click', (e) => {
-            if (!e.target.closest('.wp-header-btn')) {
-                panel.classList.toggle('collapsed');
-            }
-        });
 
-        // Кнопка списка сериалов
         document.getElementById('wp-showlist-btn').addEventListener('click', (e) => {
             e.stopPropagation();
             if (!showListOpen) {
@@ -1221,7 +1184,6 @@
             }
         });
 
-        // Автосохранение настроек
         const bindSetting = (id, key, isNumber = false) => {
             const element = document.getElementById(id);
             if (!element) return;
@@ -1246,7 +1208,6 @@
         bindSetting('wp-adaptive-skip', 'adaptiveSkip');
         bindSetting('wp-track-time', 'trackWatchTime');
 
-        // Кнопки автовключения
         document.getElementById('wp-autoplay-set').addEventListener('click', () => {
             const count = parseInt(document.getElementById('wp-autoplay-count').value) || 0;
             saveSettings({ autoPlayCount: count });
@@ -1261,7 +1222,6 @@
             log('🔄 Счётчик автовключения сброшен');
         });
 
-        // Обновляем отображение
         updateWatchTimeDisplay();
         updateAdaptiveSkipDisplay();
     }
@@ -1331,7 +1291,6 @@
                 }, 1000);
             }
 
-            // Запрос состояния воспроизведения
             if (event.data?.type === 'WPARTY_GET_PLAY_STATE') {
                 try {
                     window.parent.postMessage({ 
@@ -1417,8 +1376,7 @@
             const progress = getProgress();
             if (!progress || hasTriggered) return;
 
-            // Получаем адаптивное значение через родителя или используем настройку
-            const skipSeconds = settings.skipSeconds; // В iframe используем базовое значение
+            const skipSeconds = settings.skipSeconds;
 
             if (settings.skipCredits && progress.remainingTime <= skipSeconds) {
                 triggerNext(`Осталось ${Math.round(progress.remainingTime)} сек - пропускаю титры!`, progress.remainingTime);
@@ -1427,7 +1385,6 @@
             }
         }, CHECK_INTERVAL);
 
-        // Отправляем время просмотра
         watchTimeInterval = setInterval(sendWatchTime, WATCH_TIME_INTERVAL);
 
         statusInterval = setInterval(() => {
@@ -1626,7 +1583,6 @@
                 return false;
             }
 
-            // Сохраняем данные о титрах для адаптивного пропуска
             if (remainingSeconds && settings.adaptiveSkip) {
                 saveShowCreditsData(remainingSeconds);
             }
@@ -1703,7 +1659,6 @@
             return false;
         }
 
-        // Слушаем сообщения от iframe
         window.addEventListener('message', (event) => {
             if (!isTrustedOrigin(event.origin) && event.origin !== window.location.origin) {
                 return;
@@ -1725,7 +1680,6 @@
             }
         });
 
-        // Создаём UI панель
         setTimeout(() => {
             createSettingsPanel();
 
@@ -1749,7 +1703,6 @@
                 log(`🎯 Автовключение активно: осталось ${autoPlayRemaining} серий`);
             }
 
-            // Обновляем адаптивное значение
             updateAdaptiveSkipDisplay();
         }, 2000);
 
@@ -1765,12 +1718,10 @@
         log(`⚙️ Автовключение: ${settings.autoPlay}, осталось=${autoPlayRemaining}`);
         log(`⚙️ Адаптивный пропуск: ${settings.adaptiveSkip}`);
 
-        const isInIframe = window.self !== window.top;
         const hasPlayer = document.querySelector('input[data-allplay="seek"]');
         const isPlayerDomain = window.location.hostname.includes('stloadi.live');
 
         log(`Домен: ${window.location.hostname}`);
-        log(`В iframe: ${isInIframe}`);
         log(`Есть плеер: ${!!hasPlayer}`);
 
         window.addEventListener('beforeunload', cleanup);
