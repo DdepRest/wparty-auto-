@@ -48,7 +48,7 @@
 
 ### Шаг 2: Установите скрипт
 
-**[⬇️ Нажмите здесь для установки](https://raw.githubusercontent.com/DdepRest/wparty-auto/main/wparty-auto.user.js)**
+**[⬇️ Нажмите здесь для установки](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js)**
 
 Или:
 1. Откройте Tampermonkey → "Создать новый скрипт"
