@@ -1,6 +1,6 @@
 # 🎬 WPARTY Auto — Автоматическое переключение серий
 
-![Version](https://img.shields.io/badge/version-4.0.0-blue)
+![Version](https://img.shields.io/badge/version-4.0.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Tampermonkey](https://img.shields.io/badge/Tampermonkey-4.0+-orange)
 
