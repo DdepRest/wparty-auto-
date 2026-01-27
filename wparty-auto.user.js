@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WPARTY Auto - Ultimate Edition
 // @namespace    https://github.com/DdepRest/wparty-auto-
-// @version      6.3.0
+// @version      7.0.0
 // @description  Автопереключение серий, умный пропуск титров, статистика с графиками
 // @author       DdepRest
 // @license      MIT
@@ -28,1570 +28,1389 @@
 (function() {
     'use strict';
 
-    // ============ КОНФИГУРАЦИЯ ПО УМОЛЧАНИЮ ============
-    const DEFAULTS = {
-        // Автопереключение
-        autoNext: false,
-        autoSeason: false,
+    // ═══════════════════════════════════════════════════════════
+    // КОНФИГУРАЦИЯ
+    // ═══════════════════════════════════════════════════════════
 
-        // Пропуск титров
-        skipCredits: false,
-        skipMode: 'percent',
-        skipPercent: 95,
-        skipSeconds: 90,
-
-        // Громкость
-        volumeControl: false,
-        volumeOSD: false,
-        volumeSync: false,
-        volumePerChannel: false,
-
-        // Анимации
-        animations: true,
-        transitionSpeed: 'normal',
-
-        // Интерфейс
-        showNotifications: true,
-        showPanel: true,
-        trackWatchTime: true,
-
-        // Статистика
-        showCharts: true,
-        chartType: 'line'
-    };
-
-    const CHECK_INTERVAL = 1000;
-    const WATCH_TIME_INTERVAL = 10000;
-    const VOLUME_CHECK_INTERVAL = 2000;
-    const TRUSTED_ORIGINS = ['wparty.net', 'stloadi.live'];
-
-    const VERSION_INFO = {
-        current: '6.3.0',
+    const CONFIG = {
+        version: '7.0.0',
         releaseDate: '2025-01-27',
-        changelog: 'Исправлено восстановление громкости после сброса сайтом'
+        intervals: { check: 1000, watchTime: 10000, volumeCheck: 2000 },
+        trustedOrigins: ['wparty.net', 'stloadi.live'],
+        defaults: {
+            autoNext: false,
+            autoSeason: false,
+            skipCredits: false,
+            skipMode: 'percent',
+            skipPercent: 95,
+            skipSeconds: 90,
+            volumeControl: false,
+            volumeOSD: false,
+            volumeSync: false,
+            animations: true,
+            transitionSpeed: 'normal',
+            showNotifications: true,
+            showPanel: true,
+            trackWatchTime: true,
+            showCharts: true,
+            chartType: 'line'
+        }
     };
 
-    // ============ СОСТОЯНИЕ ============
-    let hasTriggered = false;
-    let progressInterval = null;
-    let watchTimeInterval = null;
-    let volumeCheckInterval = null;
-    let volumeObserver = null;
-    let settings = {};
-    let currentShowId = null;
-    let showListOpen = false;
+    // ═══════════════════════════════════════════════════════════
+    // СОСТОЯНИЕ
+    // ═══════════════════════════════════════════════════════════
 
-    // Состояние громкости
-    const volumeState = {
-        userIntentionallyMuted: false,
-        volumeChannel: null,
-        hookedElements: new WeakMap(),
-        isApplying: false,
-        lastUserVolume: 0.5
+    const State = {
+        settings: {},
+        hasTriggered: false,
+        currentShowId: null,
+        showListOpen: false,
+        activeTab: 'auto',
+        intervals: { progress: null, watchTime: null, volumeCheck: null },
+        volume: {
+            userMuted: false,
+            isApplying: false,
+            lastUserVolume: 0.5,
+            observer: null,
+            channel: null,
+            hookedElements: new WeakMap()
+        }
     };
 
-    // ============ УТИЛИТЫ ============
-    function log(msg) {
-        console.log(`🎬 WPARTY Auto v${VERSION_INFO.current}: ${msg}`);
-    }
+    // ═══════════════════════════════════════════════════════════
+    // УТИЛИТЫ
+    // ═══════════════════════════════════════════════════════════
 
-    function generateShowId() {
-        const path = window.location.pathname;
-        const match = path.match(/\/(\d+)/);
-        if (match) return match[1];
-        return path.split('/').filter(Boolean)[0] || 'unknown';
-    }
+    const log = (msg, type = 'info') => {
+        const icons = { info: '📘', success: '✅', warning: '⚠️', error: '❌' };
+        console.log(`${icons[type]} WPARTY v${CONFIG.version}: ${msg}`);
+    };
 
-    function getShowName() {
-        const selectors = ['h1.header', 'h1', '.title', '[class*="title"]'];
-        for (const selector of selectors) {
-            const el = document.querySelector(selector);
-            if (el && el.textContent.trim()) {
-                return el.textContent.trim().substring(0, 100);
-            }
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, Number(v) || min));
+
+    const formatTime = (s) => {
+        if (!s || s < 0) return '0 сек';
+        if (s < 60) return `${Math.round(s)} сек`;
+        if (s < 3600) return `${Math.round(s / 60)} мин`;
+        return `${Math.floor(s / 3600)}ч ${Math.round((s % 3600) / 60)}м`;
+    };
+
+    const formatDate = (d) => d.toISOString().split('T')[0];
+
+    const isTrustedOrigin = (origin) => CONFIG.trustedOrigins.some(d => origin.includes(d));
+
+    const getShowId = () => {
+        const match = window.location.pathname.match(/\/(\d+)/);
+        return match ? match[1] : window.location.pathname.split('/').filter(Boolean)[0] || 'unknown';
+    };
+
+    const getShowName = () => {
+        for (const sel of ['h1.header', 'h1', '.title']) {
+            const el = document.querySelector(sel);
+            if (el?.textContent?.trim()) return el.textContent.trim().substring(0, 100);
         }
         return 'Неизвестный сериал';
-    }
+    };
 
-    function loadSettings() {
-        try {
-            const loaded = {};
-            Object.keys(DEFAULTS).forEach(key => {
-                loaded[key] = GM_getValue(key, DEFAULTS[key]);
-            });
-            volumeState.userIntentionallyMuted = GM_getValue('volumeMuteState', false);
-            volumeState.lastUserVolume = GM_getValue('savedVolume', 0.5);
-            return loaded;
-        } catch(e) {
-            log('⚠️ GM_getValue недоступен, используем localStorage');
-            const saved = localStorage.getItem('wparty_settings');
-            return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : { ...DEFAULTS };
-        }
-    }
+    // ═══════════════════════════════════════════════════════════
+    // ХРАНИЛИЩЕ
+    // ═══════════════════════════════════════════════════════════
 
-    function saveSettings(newSettings) {
-        settings = { ...settings, ...newSettings };
-        try {
-            Object.entries(settings).forEach(([key, value]) => {
-                GM_setValue(key, value);
-            });
-        } catch(e) {
-            localStorage.setItem('wparty_settings', JSON.stringify(settings));
-        }
-    }
-
-    function cleanup() {
-        if (progressInterval) clearInterval(progressInterval);
-        if (watchTimeInterval) clearInterval(watchTimeInterval);
-        if (volumeCheckInterval) clearInterval(volumeCheckInterval);
-        if (volumeObserver) {
-            volumeObserver.disconnect();
-            volumeObserver = null;
-        }
-        if (volumeState.volumeChannel) {
-            try { volumeState.volumeChannel.close(); } catch(e) {}
-        }
-        log('🧹 Ресурсы очищены');
-    }
-
-    function formatTime(seconds) {
-        if (seconds < 60) return `${Math.round(seconds)} сек`;
-        if (seconds < 3600) return `${Math.round(seconds / 60)} мин`;
-        const hours = Math.floor(seconds / 3600);
-        const mins = Math.round((seconds % 3600) / 60);
-        return `${hours}ч ${mins}м`;
-    }
-
-    function formatDate(date) {
-        return date.toISOString().split('T')[0];
-    }
-
-    function isTrustedOrigin(origin) {
-        return TRUSTED_ORIGINS.some(domain => origin.includes(domain));
-    }
-
-    // ============ ПРОПУСК ТИТРОВ ============
-
-    function shouldSkipCredits(currentTime, duration) {
-        if (!settings.skipCredits || !settings.autoNext) return false;
-        if (settings.skipMode === 'percent') {
-            const currentPercent = (currentTime / duration) * 100;
-            return currentPercent >= settings.skipPercent;
-        } else {
-            const timeLeft = duration - currentTime;
-            return timeLeft <= settings.skipSeconds && timeLeft > 0;
-        }
-    }
-
-    function getSkipInfo(currentTime, duration) {
-        if (settings.skipMode === 'percent') {
-            const currentPercent = (currentTime / duration) * 100;
-            return { info: `${currentPercent.toFixed(1)}% / ${settings.skipPercent}%` };
-        } else {
-            const timeLeft = duration - currentTime;
-            return { info: `${Math.round(timeLeft)}с / ${settings.skipSeconds}с` };
-        }
-    }
-
-    // ============ ГРОМКОСТЬ ============
-
-    function clamp01(v) {
-        v = Number(v);
-        if (!Number.isFinite(v)) return 0.5;
-        return Math.max(0, Math.min(1, v));
-    }
-
-    function getSavedVolume() {
-        try {
-            return clamp01(GM_getValue('savedVolume', 0.5));
-        } catch(e) {
-            return 0.5;
-        }
-    }
-
-    function saveVolume(vol) {
-        if (!settings.volumeControl) return;
-        vol = clamp01(vol);
-        volumeState.lastUserVolume = vol;
-        try {
-            GM_setValue('savedVolume', vol);
-        } catch(e) {}
-    }
-
-    function findVideo() {
-        return document.querySelector('video');
-    }
-
-    function findVolumeSlider() {
-        return document.querySelector('input[data-allplay="volume"]');
-    }
-
-    function findMuteButton() {
-        return document.querySelector('button[data-allplay="mute"]');
-    }
-
-    function applyVolume(showOSD = true) {
-        if (!settings.volumeControl) return;
-        if (volumeState.isApplying) return;
-
-        volumeState.isApplying = true;
-
-        const video = findVideo();
-        const slider = findVolumeSlider();
-        const muteBtn = findMuteButton();
-        const savedVol = getSavedVolume();
-
-        log(`🔊 Применяю громкость: ${Math.round(savedVol * 100)}%`);
-
-        // Устанавливаем громкость видео
-        if (video) {
-            video.volume = savedVol;
-            video.muted = volumeState.userIntentionallyMuted;
-        }
-
-        // Обновляем слайдер полностью
-        if (slider) {
-            const percent = savedVol * 100;
-
-            // Устанавливаем value
-            slider.value = savedVol;
-
-            // Обновляем ARIA атрибуты
-            slider.setAttribute('aria-valuenow', Math.round(percent));
-            slider.setAttribute('aria-valuetext', `${percent.toFixed(1)}%`);
-
-            // Обновляем CSS переменную для визуального отображения
-            slider.style.setProperty('--value', `${percent}%`);
-
-            // Триггерим событие input для уведомления плеера
-            const inputEvent = new Event('input', { bubbles: true });
-            slider.dispatchEvent(inputEvent);
-
-            // Также триггерим change
-            const changeEvent = new Event('change', { bubbles: true });
-            slider.dispatchEvent(changeEvent);
-        }
-
-        // Обновляем кнопку mute
-        if (muteBtn) {
-            const isMuted = volumeState.userIntentionallyMuted || savedVol < 0.01;
-
-            if (isMuted) {
-                muteBtn.classList.add('allplay__control--pressed');
-                muteBtn.setAttribute('aria-pressed', 'true');
-            } else {
-                muteBtn.classList.remove('allplay__control--pressed');
-                muteBtn.setAttribute('aria-pressed', 'false');
+    const Storage = {
+        get(key, def = null) {
+            try { return GM_getValue(key, def); }
+            catch { const d = localStorage.getItem(`wparty_${key}`); return d ? JSON.parse(d) : def; }
+        },
+        set(key, val) {
+            try { GM_setValue(key, val); }
+            catch { localStorage.setItem(`wparty_${key}`, JSON.stringify(val)); }
+        },
+        loadSettings() {
+            const s = {};
+            Object.keys(CONFIG.defaults).forEach(k => s[k] = this.get(k, CONFIG.defaults[k]));
+            State.volume.userMuted = this.get('volumeMuteState', false);
+            State.volume.lastUserVolume = this.get('savedVolume', 0.5);
+            return s;
+        },
+        saveSettings(ns) {
+            State.settings = { ...State.settings, ...ns };
+            Object.entries(ns).forEach(([k, v]) => this.set(k, v));
+        },
+        getWatchTime() { return this.get('watchTime', {}); },
+        saveWatchTime(d) { this.set('watchTime', d); },
+        addWatchTime(secs) {
+            if (!State.settings.trackWatchTime || secs <= 0) return;
+            const today = formatDate(new Date());
+            const data = this.getWatchTime();
+            if (!data[today]) data[today] = { total: 0, shows: {} };
+            data[today].total += secs;
+            if (State.currentShowId) {
+                if (!data[today].shows[State.currentShowId])
+                    data[today].shows[State.currentShowId] = { time: 0, name: getShowName() };
+                data[today].shows[State.currentShowId].time += secs;
             }
-        }
-
-        if (showOSD && settings.volumeOSD) {
-            showVolumeOSD(savedVol);
-        }
-
-        // Снимаем флаг через небольшую задержку
-        setTimeout(() => {
-            volumeState.isApplying = false;
-        }, 150);
-    }
-
-    function checkAndRestoreVolume() {
-        if (!settings.volumeControl) return;
-        if (volumeState.isApplying) return;
-        if (volumeState.userIntentionallyMuted) return;
-
-        const slider = findVolumeSlider();
-        const video = findVideo();
-        const savedVol = getSavedVolume();
-
-        if (!slider && !video) return;
-
-        const currentSliderVol = slider ? parseFloat(slider.value) : null;
-        const currentVideoVol = video ? video.volume : null;
-
-        // Если громкость была сброшена сайтом (стала 0 или близка к 0, а сохранённая > 0)
-        const sliderReset = currentSliderVol !== null && currentSliderVol < 0.02 && savedVol >= 0.02;
-        const videoReset = currentVideoVol !== null && currentVideoVol < 0.02 && savedVol >= 0.02;
-        const videoMuted = video && video.muted && !volumeState.userIntentionallyMuted;
-
-        if (sliderReset || videoReset || videoMuted) {
-            log('⚠️ Обнаружен сброс громкости сайтом, восстанавливаю...');
-            applyVolume(true);
-        }
-    }
-
-    function showVolumeOSD(vol) {
-        let osd = document.getElementById('wp-volume-osd');
-
-        if (!osd) {
-            osd = document.createElement('div');
-            osd.id = 'wp-volume-osd';
-            osd.innerHTML = `
-                <div class="wp-vol-icon">🔊</div>
-                <div class="wp-vol-bar"><div class="wp-vol-fill"></div></div>
-                <div class="wp-vol-text">50%</div>
-            `;
-            document.body.appendChild(osd);
-        }
-
-        const fill = osd.querySelector('.wp-vol-fill');
-        const text = osd.querySelector('.wp-vol-text');
-        const icon = osd.querySelector('.wp-vol-icon');
-
-        const percent = Math.round(vol * 100);
-        fill.style.width = percent + '%';
-        text.textContent = percent + '%';
-
-        if (volumeState.userIntentionallyMuted || vol < 0.01) {
-            icon.textContent = '🔇';
-        } else if (vol < 0.33) {
-            icon.textContent = '🔈';
-        } else if (vol < 0.66) {
-            icon.textContent = '🔉';
-        } else {
-            icon.textContent = '🔊';
-        }
-
-        osd.classList.add('wp-vol-visible');
-        clearTimeout(osd._hideTimer);
-        osd._hideTimer = setTimeout(() => {
-            osd.classList.remove('wp-vol-visible');
-        }, 1500);
-    }
-
-    function hookVolumeControls() {
-        if (!settings.volumeControl) return;
-
-        const slider = findVolumeSlider();
-        const video = findVideo();
-        const muteBtn = findMuteButton();
-
-        // Обработчик слайдера
-        if (slider && !volumeState.hookedElements.has(slider)) {
-            volumeState.hookedElements.set(slider, true);
-
-            // Пользователь меняет громкость
-            slider.addEventListener('input', (e) => {
-                // Проверяем, что это действие пользователя, а не наш скрипт
-                if (e.isTrusted && !volumeState.isApplying) {
-                    const vol = parseFloat(slider.value);
-                    volumeState.userIntentionallyMuted = vol < 0.01;
-                    saveVolume(vol);
-
-                    if (settings.volumeOSD) {
-                        showVolumeOSD(vol);
-                    }
-
-                    log(`👆 Пользователь изменил громкость: ${Math.round(vol * 100)}%`);
-                }
-            });
-
-            // MutationObserver для отслеживания изменений атрибутов
-            if (!volumeObserver) {
-                volumeObserver = new MutationObserver((mutations) => {
-                    if (volumeState.isApplying) return;
-
-                    for (const mutation of mutations) {
-                        if (mutation.type === 'attributes') {
-                            const attrName = mutation.attributeName;
-                            if (attrName === 'aria-valuenow' || attrName === 'value' || attrName === 'style') {
-                                // Проверяем через небольшую задержку
-                                setTimeout(checkAndRestoreVolume, 50);
-                                break;
-                            }
-                        }
-                    }
-                });
-
-                volumeObserver.observe(slider, {
-                    attributes: true,
-                    attributeFilter: ['value', 'aria-valuenow', 'style']
-                });
-
-                log('👀 MutationObserver для слайдера громкости активирован');
+            const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            Object.keys(data).forEach(dt => { if (new Date(dt).getTime() < cutoff) delete data[dt]; });
+            this.saveWatchTime(data);
+        },
+        getWatchTimeStats() {
+            const data = this.getWatchTime();
+            const today = formatDate(new Date());
+            let weekTotal = 0;
+            const weekData = [];
+            for (let i = 6; i >= 0; i--) {
+                const dt = formatDate(new Date(Date.now() - i * 86400000));
+                const t = data[dt]?.total || 0;
+                weekData.push({ date: dt, time: t });
+                weekTotal += t;
             }
+            return { today: data[today]?.total || 0, week: weekTotal, weekData };
+        },
+        getWatchHistory() { return this.get('watchHistory', {}); },
+        saveWatchHistory(season, episode) {
+            const h = this.getWatchHistory();
+            const id = State.currentShowId || getShowId();
+            h[id] = { name: getShowName(), season, episode, timestamp: Date.now(), url: window.location.href };
+            this.set('watchHistory', h);
         }
+    };
 
-        // Обработчик видео
-        if (video && !volumeState.hookedElements.has(video)) {
-            volumeState.hookedElements.set(video, true);
+    // ═══════════════════════════════════════════════════════════
+    // DOM
+    // ═══════════════════════════════════════════════════════════
 
-            video.addEventListener('volumechange', (e) => {
-                if (volumeState.isApplying) return;
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+    const $video = () => $('video');
+    const $volumeSlider = () => $('input[data-allplay="volume"]');
+    const $muteBtn = () => $('button[data-allplay="mute"]');
+    const $seekSlider = () => $('input[data-allplay="seek"]');
 
-                // Если громкость изменилась НЕ на 0, сохраняем её
-                if (video.volume > 0.01 && !video.muted) {
-                    saveVolume(video.volume);
-                }
-                // Если сброшена на 0 или замьючена, проверяем нужно ли восстановить
-                else if (!volumeState.userIntentionallyMuted) {
-                    setTimeout(checkAndRestoreVolume, 100);
-                }
-            });
+    // ═══════════════════════════════════════════════════════════
+    // УВЕДОМЛЕНИЯ
+    // ═══════════════════════════════════════════════════════════
 
-            log('🎬 Слушатель volumechange для video активирован');
-        }
-
-        // Обработчик кнопки mute
-        if (muteBtn && !volumeState.hookedElements.has(muteBtn)) {
-            volumeState.hookedElements.set(muteBtn, true);
-
-            muteBtn.addEventListener('click', (e) => {
-                if (e.isTrusted) {
-                    // Пользователь нажал кнопку mute
-                    volumeState.userIntentionallyMuted = !volumeState.userIntentionallyMuted;
-
-                    try {
-                        GM_setValue('volumeMuteState', volumeState.userIntentionallyMuted);
-                    } catch(e) {}
-
-                    log(`🔇 Пользователь ${volumeState.userIntentionallyMuted ? 'выключил' : 'включил'} звук`);
-
-                    // Если пользователь включил звук, восстанавливаем громкость
-                    if (!volumeState.userIntentionallyMuted) {
-                        setTimeout(() => applyVolume(true), 100);
-                    }
-                }
-            });
-
-            log('🔘 Слушатель клика для кнопки mute активирован');
-        }
-
-        // Периодическая проверка громкости
-        if (!volumeCheckInterval) {
-            volumeCheckInterval = setInterval(checkAndRestoreVolume, VOLUME_CHECK_INTERVAL);
-            log(`⏰ Периодическая проверка громкости каждые ${VOLUME_CHECK_INTERVAL}мс`);
-        }
-    }
-
-    function initVolumeSync() {
-        if (!settings.volumeSync) return;
-        try {
-            volumeState.volumeChannel = new BroadcastChannel('wparty-volume-sync');
-            volumeState.volumeChannel.onmessage = (e) => {
-                if (e.data?.type === 'volume-change') {
-                    applyVolume(false);
-                }
-            };
-        } catch(e) {}
-    }
-
-    // ============ ВРЕМЯ ПРОСМОТРА ============
-
-    function getWatchTimeData() {
-        try {
-            return GM_getValue('watchTime', {});
-        } catch(e) {
-            return JSON.parse(localStorage.getItem('wparty_watchTime') || '{}');
-        }
-    }
-
-    function saveWatchTimeData(data) {
-        try {
-            GM_setValue('watchTime', data);
-        } catch(e) {
-            localStorage.setItem('wparty_watchTime', JSON.stringify(data));
-        }
-    }
-
-    function addWatchTime(seconds) {
-        if (!settings.trackWatchTime || seconds <= 0) return;
-
-        const today = formatDate(new Date());
-        const data = getWatchTimeData();
-
-        if (!data[today]) {
-            data[today] = { total: 0, shows: {} };
-        }
-
-        data[today].total = (data[today].total || 0) + seconds;
-
-        if (currentShowId) {
-            if (!data[today].shows[currentShowId]) {
-                data[today].shows[currentShowId] = { time: 0, name: getShowName() };
-            }
-            data[today].shows[currentShowId].time += seconds;
-        }
-
-        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        Object.keys(data).forEach(date => {
-            if (new Date(date).getTime() < cutoff) {
-                delete data[date];
-            }
-        });
-
-        saveWatchTimeData(data);
-    }
-
-    function getWatchTimeStats() {
-        const data = getWatchTimeData();
-        const today = formatDate(new Date());
-        const yesterday = formatDate(new Date(Date.now() - 86400000));
-
-        let weekTotal = 0;
-        const weekData = [];
-
-        for (let i = 6; i >= 0; i--) {
-            const date = formatDate(new Date(Date.now() - i * 86400000));
-            const dayData = data[date]?.total || 0;
-            weekData.push({ date, time: dayData });
-            weekTotal += dayData;
-        }
-
-        return {
-            today: data[today]?.total || 0,
-            yesterday: data[yesterday]?.total || 0,
-            week: weekTotal,
-            weekData: weekData,
-            todayShows: data[today]?.shows || {}
-        };
-    }
-
-    // ============ ИСТОРИЯ ПРОСМОТРА ============
-
-    function getWatchHistory() {
-        try {
-            return GM_getValue('watchHistory', {});
-        } catch(e) {
-            return JSON.parse(localStorage.getItem('wparty_history') || '{}');
-        }
-    }
-
-    function saveWatchHistory(season, episode) {
-        try {
-            const showId = currentShowId || generateShowId();
-            const showName = getShowName();
-            const history = GM_getValue('watchHistory', {});
-
-            history[showId] = {
-                name: showName,
-                season,
-                episode,
-                timestamp: Date.now(),
-                url: window.location.href
-            };
-
-            GM_setValue('watchHistory', history);
-        } catch(e) {}
-    }
-
-    // ============ УВЕДОМЛЕНИЯ ============
-
-    function showNotification(message, type = 'info', duration = 3000) {
-        if (!settings.showNotifications) return;
-
-        document.querySelectorAll('.wparty-notification').forEach(n => n.remove());
-
+    const notify = (msg, type = 'info', dur = 3000) => {
+        if (!State.settings.showNotifications) return;
+        $$('.wparty-toast').forEach(n => n.remove());
         const colors = {
-            info: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            success: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
-            warning: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-            error: 'linear-gradient(135deg, #eb3349 0%, #f45c43 100%)'
+            info: '#6366f1', success: '#10b981', warning: '#f59e0b', error: '#ef4444'
         };
+        const toast = document.createElement('div');
+        toast.className = 'wparty-toast';
+        toast.innerHTML = `<span class="wparty-toast-text">${msg}</span>`;
+        toast.style.background = colors[type];
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('wparty-toast-visible'));
+        setTimeout(() => {
+            toast.classList.remove('wparty-toast-visible');
+            setTimeout(() => toast.remove(), 400);
+        }, dur);
+    };
 
-        const notification = document.createElement('div');
-        notification.className = 'wparty-notification';
-        notification.textContent = message;
-        notification.style.cssText = `
-            position: fixed; top: 20px; left: 50%; z-index: 2147483647;
-            transform: translateX(-50%) translateY(-100px);
-            background: ${colors[type]};
-            color: white; padding: 14px 28px; border-radius: 30px;
-            font-size: 15px; font-weight: 500;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            pointer-events: none;
-        `;
+    // ═══════════════════════════════════════════════════════════
+    // ГРОМКОСТЬ
+    // ═══════════════════════════════════════════════════════════
 
-        document.body.appendChild(notification);
+    const Volume = {
+        getSaved() { return clamp(Storage.get('savedVolume', 0.5), 0, 1); },
+        save(vol) {
+            if (!State.settings.volumeControl) return;
+            vol = clamp(vol, 0, 1);
+            State.volume.lastUserVolume = vol;
+            Storage.set('savedVolume', vol);
+        },
+        apply(showOSD = true) {
+            if (!State.settings.volumeControl || State.volume.isApplying) return;
+            State.volume.isApplying = true;
+            const saved = this.getSaved();
+            log(`Применяю громкость: ${Math.round(saved * 100)}%`);
 
-        if (settings.animations) {
-            requestAnimationFrame(() => {
-                notification.style.transform = 'translateX(-50%) translateY(0)';
-            });
-            setTimeout(() => {
-                notification.style.transform = 'translateX(-50%) translateY(-100px)';
-                setTimeout(() => notification.remove(), 400);
-            }, duration);
-        } else {
-            notification.style.transform = 'translateX(-50%) translateY(0)';
-            setTimeout(() => notification.remove(), duration);
-        }
-    }
+            const video = $video();
+            const slider = $volumeSlider();
+            const muteBtn = $muteBtn();
 
-    // ============ ПРОВЕРКА ОБНОВЛЕНИЙ ============
+            if (video) { video.volume = saved; video.muted = State.volume.userMuted; }
+            if (slider) {
+                const pct = saved * 100;
+                slider.value = saved;
+                slider.setAttribute('aria-valuenow', Math.round(pct));
+                slider.setAttribute('aria-valuetext', `${pct.toFixed(1)}%`);
+                slider.style.setProperty('--value', `${pct}%`);
+                slider.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (muteBtn) {
+                const muted = State.volume.userMuted || saved < 0.01;
+                muteBtn.classList.toggle('allplay__control--pressed', muted);
+                muteBtn.setAttribute('aria-pressed', muted.toString());
+            }
+            if (showOSD && State.settings.volumeOSD) this.showOSD(saved);
+            setTimeout(() => { State.volume.isApplying = false; }, 150);
+        },
+        checkAndRestore() {
+            if (!State.settings.volumeControl || State.volume.isApplying || State.volume.userMuted) return;
+            const slider = $volumeSlider();
+            const video = $video();
+            const saved = this.getSaved();
+            const sliderVol = slider ? parseFloat(slider.value) : null;
+            const videoVol = video ? video.volume : null;
+            const needsRestore =
+                (sliderVol !== null && sliderVol < 0.02 && saved >= 0.02) ||
+                (videoVol !== null && videoVol < 0.02 && saved >= 0.02) ||
+                (video?.muted && !State.volume.userMuted);
+            if (needsRestore) {
+                log('Сброс громкости обнаружен, восстанавливаю...', 'warning');
+                this.apply(true);
+            }
+        },
+        showOSD(vol) {
+            let osd = $('#wparty-volume-osd');
+            if (!osd) {
+                osd = document.createElement('div');
+                osd.id = 'wparty-volume-osd';
+                osd.innerHTML = `
+                    <div class="wparty-osd-icon">🔊</div>
+                    <div class="wparty-osd-bar"><div class="wparty-osd-fill"></div></div>
+                    <div class="wparty-osd-value">50%</div>
+                `;
+                document.body.appendChild(osd);
+            }
+            const fill = osd.querySelector('.wparty-osd-fill');
+            const value = osd.querySelector('.wparty-osd-value');
+            const icon = osd.querySelector('.wparty-osd-icon');
+            const pct = Math.round(vol * 100);
+            fill.style.width = `${pct}%`;
+            value.textContent = `${pct}%`;
+            if (State.volume.userMuted || vol < 0.01) icon.textContent = '🔇';
+            else if (vol < 0.33) icon.textContent = '🔈';
+            else if (vol < 0.66) icon.textContent = '🔉';
+            else icon.textContent = '🔊';
+            osd.classList.add('wparty-osd-visible');
+            clearTimeout(osd._hideTimer);
+            osd._hideTimer = setTimeout(() => osd.classList.remove('wparty-osd-visible'), 1500);
+        },
+        hookControls() {
+            if (!State.settings.volumeControl) return;
+            const slider = $volumeSlider();
+            const video = $video();
+            const muteBtn = $muteBtn();
 
-    function checkForUpdates() {
-        try {
-            const lastCheck = GM_getValue('lastUpdateCheck', 0);
-            const now = Date.now();
-
-            if (now - lastCheck < 86400000) return;
-
-            GM_setValue('lastUpdateCheck', now);
-            log('🔍 Проверяю обновления...');
-
-            if (typeof GM_xmlhttpRequest !== 'undefined') {
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url: 'https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js',
-                    onload: function(response) {
-                        if (response.status === 200) {
-                            const match = response.responseText.match(/@version\s+([\d.]+)/);
-                            if (match) {
-                                const remoteVersion = match[1];
-                                if (compareVersions(remoteVersion, VERSION_INFO.current) > 0) {
-                                    showNotification(`🆕 Доступна версия ${remoteVersion}!`, 'info', 5000);
-                                }
-                            }
-                        }
+            if (slider && !State.volume.hookedElements.has(slider)) {
+                State.volume.hookedElements.set(slider, true);
+                slider.addEventListener('input', (e) => {
+                    if (e.isTrusted && !State.volume.isApplying) {
+                        const vol = parseFloat(slider.value);
+                        State.volume.userMuted = vol < 0.01;
+                        this.save(vol);
+                        if (State.settings.volumeOSD) this.showOSD(vol);
+                    }
+                });
+                if (!State.volume.observer) {
+                    State.volume.observer = new MutationObserver(() => {
+                        if (!State.volume.isApplying) setTimeout(() => this.checkAndRestore(), 50);
+                    });
+                    State.volume.observer.observe(slider, {
+                        attributes: true,
+                        attributeFilter: ['value', 'aria-valuenow', 'style']
+                    });
+                }
+            }
+            if (video && !State.volume.hookedElements.has(video)) {
+                State.volume.hookedElements.set(video, true);
+                video.addEventListener('volumechange', () => {
+                    if (State.volume.isApplying) return;
+                    if (video.volume > 0.01 && !video.muted) this.save(video.volume);
+                    else if (!State.volume.userMuted) setTimeout(() => this.checkAndRestore(), 100);
+                });
+            }
+            if (muteBtn && !State.volume.hookedElements.has(muteBtn)) {
+                State.volume.hookedElements.set(muteBtn, true);
+                muteBtn.addEventListener('click', (e) => {
+                    if (e.isTrusted) {
+                        State.volume.userMuted = !State.volume.userMuted;
+                        Storage.set('volumeMuteState', State.volume.userMuted);
+                        if (!State.volume.userMuted) setTimeout(() => this.apply(true), 100);
                     }
                 });
             }
-        } catch(e) {
-            log('⚠️ Ошибка при проверке обновлений: ' + e.message);
+            if (!State.intervals.volumeCheck) {
+                State.intervals.volumeCheck = setInterval(() => this.checkAndRestore(), CONFIG.intervals.volumeCheck);
+            }
         }
-    }
+    };
 
-    function compareVersions(v1, v2) {
-        const parts1 = v1.split('.').map(Number);
-        const parts2 = v2.split('.').map(Number);
+    // ═══════════════════════════════════════════════════════════
+    // ПРОПУСК ТИТРОВ
+    // ═══════════════════════════════════════════════════════════
 
-        for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-            const p1 = parts1[i] || 0;
-            const p2 = parts2[i] || 0;
-            if (p1 > p2) return 1;
-            if (p1 < p2) return -1;
+    const Credits = {
+        shouldSkip(cur, dur) {
+            if (!State.settings.skipCredits || !State.settings.autoNext) return false;
+            if (State.settings.skipMode === 'percent') return (cur / dur) * 100 >= State.settings.skipPercent;
+            return dur - cur <= State.settings.skipSeconds && dur - cur > 0;
         }
-        return 0;
-    }
+    };
 
-    // ============ ГРАФИКИ СТАТИСТИКИ ============
+    // ═══════════════════════════════════════════════════════════
+    // ГРАФИКИ
+    // ═══════════════════════════════════════════════════════════
 
-    function createChart(canvasId, data) {
-        const canvas = document.getElementById(canvasId);
-        if (!canvas) return;
+    const Charts = {
+        draw(canvasId, data) {
+            const canvas = $(`#${canvasId}`);
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const { width, height } = canvas;
+            ctx.clearRect(0, 0, width, height);
+            if (State.settings.chartType === 'bar') this.drawBar(ctx, width, height, data);
+            else this.drawLine(ctx, width, height, data);
+        },
+        drawLine(ctx, w, h, data) {
+            const pad = 30, gw = w - pad * 2, gh = h - pad * 2;
+            const max = Math.max(...data.map(d => d.time), 1);
+            const stepX = gw / (data.length - 1 || 1);
 
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
+            const grad = ctx.createLinearGradient(0, pad, 0, h - pad);
+            grad.addColorStop(0, 'rgba(99,102,241,0.4)');
+            grad.addColorStop(1, 'rgba(139,92,246,0.05)');
 
-        ctx.clearRect(0, 0, width, height);
-
-        if (settings.chartType === 'line') {
-            drawLineChart(ctx, width, height, data);
-        } else if (settings.chartType === 'bar') {
-            drawBarChart(ctx, width, height, data);
-        }
-    }
-
-    function drawLineChart(ctx, width, height, data) {
-        const padding = 40;
-        const graphWidth = width - padding * 2;
-        const graphHeight = height - padding * 2;
-
-        const maxValue = Math.max(...data.map(d => d.time), 1);
-        const stepX = graphWidth / (data.length - 1 || 1);
-
-        const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
-        gradient.addColorStop(0, 'rgba(102, 126, 234, 0.8)');
-        gradient.addColorStop(1, 'rgba(118, 75, 162, 0.2)');
-
-        ctx.beginPath();
-        data.forEach((point, i) => {
-            const x = padding + i * stepX;
-            const y = height - padding - (point.time / maxValue) * graphHeight;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        });
-
-        ctx.strokeStyle = '#667eea';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-
-        ctx.lineTo(width - padding, height - padding);
-        ctx.lineTo(padding, height - padding);
-        ctx.closePath();
-        ctx.fillStyle = gradient;
-        ctx.fill();
-
-        data.forEach((point, i) => {
-            const x = padding + i * stepX;
-            const y = height - padding - (point.time / maxValue) * graphHeight;
             ctx.beginPath();
-            ctx.arc(x, y, 4, 0, Math.PI * 2);
-            ctx.fillStyle = '#667eea';
-            ctx.fill();
-            ctx.strokeStyle = '#fff';
+            data.forEach((p, i) => {
+                const x = pad + i * stepX, y = h - pad - (p.time / max) * gh;
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+            ctx.strokeStyle = '#6366f1';
             ctx.lineWidth = 2;
             ctx.stroke();
-        });
+            ctx.lineTo(w - pad, h - pad);
+            ctx.lineTo(pad, h - pad);
+            ctx.closePath();
+            ctx.fillStyle = grad;
+            ctx.fill();
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(padding, padding);
-        ctx.lineTo(padding, height - padding);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(padding, height - padding);
-        ctx.lineTo(width - padding, height - padding);
-        ctx.stroke();
+            data.forEach((p, i) => {
+                const x = pad + i * stepX, y = h - pad - (p.time / max) * gh;
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, Math.PI * 2);
+                ctx.fillStyle = '#6366f1';
+                ctx.fill();
+            });
 
-        ctx.fillStyle = '#888';
-        ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        ctx.textAlign = 'center';
-        data.forEach((point, i) => {
-            const x = padding + i * stepX;
-            const label = point.date.split('-')[2];
-            ctx.fillText(label, x, height - padding + 20);
-        });
-    }
-
-    function drawBarChart(ctx, width, height, data) {
-        const padding = 40;
-        const graphWidth = width - padding * 2;
-        const graphHeight = height - padding * 2;
-
-        const maxValue = Math.max(...data.map(d => d.time), 1);
-        const barWidth = graphWidth / data.length - 10;
-
-        data.forEach((point, i) => {
-            const x = padding + i * (graphWidth / data.length) + 5;
-            const barHeight = (point.time / maxValue) * graphHeight;
-            const y = height - padding - barHeight;
-
-            const gradient = ctx.createLinearGradient(0, y, 0, height - padding);
-            gradient.addColorStop(0, '#667eea');
-            gradient.addColorStop(1, '#764ba2');
-
-            ctx.fillStyle = gradient;
-            ctx.fillRect(x, y, barWidth, barHeight);
-
-            ctx.fillStyle = '#888';
-            ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = '10px sans-serif';
             ctx.textAlign = 'center';
-            const label = point.date.split('-')[2];
-            ctx.fillText(label, x + barWidth / 2, height - padding + 20);
-        });
+            data.forEach((p, i) => {
+                const x = pad + i * stepX;
+                const day = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][new Date(p.date).getDay()];
+                ctx.fillText(day, x, h - 8);
+            });
+        },
+        drawBar(ctx, w, h, data) {
+            const pad = 30, gw = w - pad * 2, gh = h - pad * 2;
+            const max = Math.max(...data.map(d => d.time), 1);
+            const barW = gw / data.length - 6;
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(padding, padding);
-        ctx.lineTo(padding, height - padding);
-        ctx.lineTo(width - padding, height - padding);
-        ctx.stroke();
-    }
+            data.forEach((p, i) => {
+                const x = pad + i * (gw / data.length) + 3;
+                const barH = (p.time / max) * gh;
+                const y = h - pad - barH;
+                const grad = ctx.createLinearGradient(x, y, x, h - pad);
+                grad.addColorStop(0, '#6366f1');
+                grad.addColorStop(1, '#8b5cf6');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.roundRect(x, y, barW, barH, 3);
+                ctx.fill();
+            });
 
-    // ============ СТИЛИ ============
-
-    function injectStyles() {
-        const animationSpeed = {
-            slow: '0.6s',
-            normal: '0.3s',
-            fast: '0.15s'
-        }[settings.transitionSpeed] || '0.3s';
-
-        const style = document.createElement('style');
-        style.textContent = `
-            #wp-volume-osd {
-                position: fixed; top: 50%; left: 50%; z-index: 2147483647;
-                transform: translate(-50%, -50%) scale(0.8);
-                background: rgba(0, 0, 0, 0.85);
-                padding: 20px 30px; border-radius: 12px;
-                display: flex; align-items: center; gap: 15px;
-                opacity: 0; pointer-events: none;
-                transition: opacity ${animationSpeed}, transform ${animationSpeed};
-                backdrop-filter: blur(10px);
-            }
-            #wp-volume-osd.wp-vol-visible {
-                opacity: 1;
-                transform: translate(-50%, -50%) scale(1);
-            }
-            .wp-vol-icon { font-size: 36px; }
-            .wp-vol-bar {
-                width: 180px; height: 10px;
-                background: rgba(255, 255, 255, 0.2);
-                border-radius: 5px; overflow: hidden;
-            }
-            .wp-vol-fill {
-                height: 100%;
-                background: linear-gradient(90deg, #00d4ff, #00ff88);
-                border-radius: 5px; transition: width 0.1s;
-            }
-            .wp-vol-text {
-                color: white; font-size: 18px;
-                font-weight: 600; min-width: 60px;
-            }
-
-            #wparty-settings-panel {
-                position: fixed; bottom: 15px; right: 15px; z-index: 2147483645;
-                background: linear-gradient(145deg, #1a1a2e 0%, #16213e 100%);
-                color: #e4e4e4; border-radius: 16px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 13px; box-shadow: 0 10px 40px rgba(0,0,0,0.4);
-                min-width: 320px; max-height: 90vh; overflow: hidden;
-                transition: all ${animationSpeed};
-            }
-            ${settings.animations ? `
-            #wparty-settings-panel {
-                animation: slideInUp ${animationSpeed} ease-out;
-            }
-            @keyframes slideInUp {
-                from { transform: translateY(100px); opacity: 0; }
-                to { transform: translateY(0); opacity: 1; }
-            }` : ''}
-            #wparty-settings-panel.collapsed .wp-content { display: none; }
-            .wp-header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding: 12px 16px; display: flex;
-                justify-content: space-between; align-items: center;
-                cursor: pointer; user-select: none;
-            }
-            .wp-title {
-                font-weight: 600; font-size: 14px;
-                display: flex; align-items: center; gap: 8px;
-            }
-            .wp-header-btn {
-                background: rgba(255,255,255,0.2); border: none;
-                color: white; width: 28px; height: 28px;
-                border-radius: 50%; cursor: pointer;
-                display: flex; align-items: center; justify-content: center;
-                transition: all 0.2s;
-            }
-            .wp-header-btn:hover {
-                background: rgba(255,255,255,0.3);
-                transform: scale(1.1);
-            }
-            .wp-content {
-                padding: 16px; max-height: 70vh; overflow-y: auto;
-            }
-            .wp-content::-webkit-scrollbar { width: 6px; }
-            .wp-content::-webkit-scrollbar-track {
-                background: rgba(255,255,255,0.05); border-radius: 3px;
-            }
-            .wp-content::-webkit-scrollbar-thumb {
-                background: rgba(102,126,234,0.5); border-radius: 3px;
-            }
-            .wp-content::-webkit-scrollbar-thumb:hover {
-                background: rgba(102,126,234,0.7);
-            }
-            .wp-section {
-                margin-bottom: 16px; padding-bottom: 16px;
-                border-bottom: 1px solid rgba(255,255,255,0.05);
-            }
-            .wp-section:last-child { border-bottom: none; margin-bottom: 0; }
-            .wp-section-title {
-                font-size: 11px; text-transform: uppercase;
-                color: #888; margin-bottom: 10px; letter-spacing: 0.5px;
-            }
-            .wp-option {
-                display: flex; align-items: center;
-                justify-content: space-between; margin-bottom: 10px;
-                padding: 8px 12px; background: rgba(255,255,255,0.05);
-                border-radius: 8px; transition: background 0.2s;
-            }
-            .wp-option:hover { background: rgba(255,255,255,0.1); }
-            .wp-option label {
-                display: flex; align-items: center;
-                gap: 8px; cursor: pointer; flex: 1;
-            }
-            .wp-switch {
-                position: relative; width: 44px; height: 24px;
-            }
-            .wp-switch input { opacity: 0; width: 0; height: 0; }
-            .wp-slider {
-                position: absolute; cursor: pointer;
-                top: 0; left: 0; right: 0; bottom: 0;
-                background-color: #444; transition: 0.3s;
-                border-radius: 24px;
-            }
-            .wp-slider:before {
-                position: absolute; content: "";
-                height: 18px; width: 18px; left: 3px; bottom: 3px;
-                background-color: white; transition: 0.3s; border-radius: 50%;
-            }
-            .wp-switch input:checked + .wp-slider {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            }
-            .wp-switch input:checked + .wp-slider:before {
-                transform: translateX(20px);
-            }
-            .wp-input {
-                width: 60px; padding: 6px 10px; border: none;
-                border-radius: 6px; background: rgba(255,255,255,0.1);
-                color: white; font-size: 13px; text-align: center;
-            }
-            .wp-select {
-                padding: 6px 10px; border: none; border-radius: 6px;
-                background: rgba(255,255,255,0.1); color: white;
-                font-size: 13px; cursor: pointer;
-            }
-            .wp-select option { background: #1a1a2e; }
-            .wp-radio-group {
-                display: flex; gap: 8px; margin-top: 8px;
-            }
-            .wp-radio-btn {
-                flex: 1; padding: 8px;
-                background: rgba(255,255,255,0.05);
-                border: 2px solid transparent; border-radius: 8px;
-                color: #888; cursor: pointer; text-align: center;
-                font-size: 12px; transition: all 0.2s;
-            }
-            .wp-radio-btn:hover { background: rgba(255,255,255,0.1); }
-            .wp-radio-btn.active {
-                background: rgba(102,126,234,0.2);
-                border-color: #667eea; color: #e4e4e4;
-            }
-            .wp-chart-container {
-                margin: 15px 0; padding: 15px;
-                background: rgba(255,255,255,0.03); border-radius: 12px;
-            }
-            #wp-stats-chart {
-                width: 100%; height: 150px; border-radius: 8px;
-            }
-            .wp-chart-controls {
-                display: flex; gap: 8px; margin-top: 10px;
-                justify-content: center;
-            }
-            .wp-chart-btn {
-                padding: 6px 12px; background: rgba(255,255,255,0.05);
-                border: none; border-radius: 6px; color: #888;
-                cursor: pointer; font-size: 11px; transition: all 0.2s;
-            }
-            .wp-chart-btn:hover {
-                background: rgba(255,255,255,0.1); color: #e4e4e4;
-            }
-            .wp-chart-btn.active {
-                background: #667eea; color: white;
-            }
-            .wp-version {
-                text-align: center; font-size: 10px; color: #555;
-                margin-top: 15px; padding-top: 10px;
-                border-top: 1px solid rgba(255,255,255,0.05);
-            }
-            #wparty-showlist-modal {
-                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-                background: rgba(0,0,0,0.8); z-index: 2147483647;
-                display: flex; align-items: center; justify-content: center;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ${settings.animations ? `animation: fadeIn ${animationSpeed};` : ''}
-            }
-            ${settings.animations ? `
-            @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
-            }` : ''}
-            .wp-modal-content {
-                background: linear-gradient(145deg, #1a1a2e 0%, #16213e 100%);
-                border-radius: 20px; width: 90%; max-width: 600px;
-                max-height: 80vh; overflow: hidden;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-                ${settings.animations ? `animation: slideInUp ${animationSpeed};` : ''}
-            }
-            .wp-modal-header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding: 20px; display: flex;
-                justify-content: space-between; align-items: center;
-            }
-            .wp-modal-title {
-                color: white; font-size: 18px; font-weight: 600;
-            }
-            .wp-modal-close {
-                background: rgba(255,255,255,0.2); border: none;
-                color: white; width: 32px; height: 32px;
-                border-radius: 50%; cursor: pointer; font-size: 18px;
-                transition: all 0.2s;
-            }
-            .wp-modal-close:hover {
-                background: rgba(255,255,255,0.3); transform: scale(1.1);
-            }
-            .wp-modal-body {
-                padding: 20px; max-height: 60vh; overflow-y: auto;
-            }
-            .wp-show-item {
-                background: rgba(255,255,255,0.05); border-radius: 12px;
-                padding: 15px; display: flex; gap: 15px; margin-bottom: 10px;
-                cursor: pointer; transition: all 0.2s;
-            }
-            .wp-show-item:hover {
-                background: rgba(255,255,255,0.1); transform: translateX(5px);
-            }
-            .wp-show-name {
-                color: #fff; font-weight: 500;
-            }
-            .wp-show-progress {
-                color: #888; font-size: 12px;
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
-    // ============ UI ПАНЕЛЬ ============
-
-    function updateWatchTimeDisplay() {
-        if (!settings.trackWatchTime) return;
-
-        const stats = getWatchTimeStats();
-        const todayEl = document.getElementById('wp-time-today');
-        const weekEl = document.getElementById('wp-time-week');
-
-        if (todayEl) todayEl.textContent = formatTime(stats.today);
-        if (weekEl) weekEl.textContent = formatTime(stats.week);
-
-        if (settings.showCharts) {
-            createChart('wp-stats-chart', stats.weekData);
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            data.forEach((p, i) => {
+                const x = pad + i * (gw / data.length) + barW / 2 + 3;
+                const day = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][new Date(p.date).getDay()];
+                ctx.fillText(day, x, h - 8);
+            });
         }
-    }
+    };
 
-    function createShowListModal() {
-        document.getElementById('wparty-showlist-modal')?.remove();
+    // ═══════════════════════════════════════════════════════════
+    // СТИЛИ
+    // ═══════════════════════════════════════════════════════════
 
-        const history = getWatchHistory();
-        const shows = Object.entries(history)
-            .map(([id, data]) => ({ id, ...data }))
-            .sort((a, b) => b.timestamp - a.timestamp);
-
-        const modal = document.createElement('div');
-        modal.id = 'wparty-showlist-modal';
-        modal.innerHTML = `
-            <div class="wp-modal-content">
-                <div class="wp-modal-header">
-                    <div class="wp-modal-title">📺 Мои сериалы</div>
-                    <button class="wp-modal-close">✕</button>
-                </div>
-                <div class="wp-modal-body">
-                    ${shows.length === 0 ? '<div style="text-align: center; color: #666; padding: 40px;">Список пуст</div>' :
-                      shows.map(show => `
-                        <div class="wp-show-item" data-url="${show.url}">
-                            <div>
-                                <div class="wp-show-name">${show.name || 'Неизвестный сериал'}</div>
-                                <div class="wp-show-progress">Сезон ${show.season || 1}, Серия ${show.episode || 1}</div>
-                            </div>
-                        </div>
-                      `).join('')
-                    }
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(modal);
-        showListOpen = true;
-
-        modal.querySelector('.wp-modal-close').addEventListener('click', () => {
-            modal.remove();
-            showListOpen = false;
-        });
-
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                modal.remove();
-                showListOpen = false;
+    const injectStyles = () => {
+        const speed = { slow: '0.5s', normal: '0.3s', fast: '0.15s' }[State.settings.transitionSpeed] || '0.3s';
+        const css = `
+            :root {
+                --wp-primary: #6366f1;
+                --wp-secondary: #8b5cf6;
+                --wp-bg: #0f0f1a;
+                --wp-bg2: #1a1a2e;
+                --wp-bg3: #252542;
+                --wp-text: #e4e4e7;
+                --wp-muted: #71717a;
+                --wp-border: rgba(255,255,255,0.08);
+                --wp-speed: ${speed};
             }
-        });
 
-        modal.querySelectorAll('.wp-show-item').forEach(item => {
-            item.addEventListener('click', () => {
-                window.location.href = item.dataset.url;
-            });
-        });
-    }
+            .wparty-toast {
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%) translateY(-100px);
+                z-index: 2147483647;
+                padding: 12px 24px;
+                border-radius: 12px;
+                color: white;
+                font: 500 14px system-ui, sans-serif;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+                opacity: 0;
+                transition: all var(--wp-speed) cubic-bezier(0.34,1.56,0.64,1);
+                pointer-events: none;
+            }
+            .wparty-toast-visible {
+                transform: translateX(-50%) translateY(0);
+                opacity: 1;
+            }
 
-    function createSettingsPanel() {
-        if (!settings.showPanel) return;
-        if (document.getElementById('wparty-settings-panel')) return;
+            #wparty-volume-osd {
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%,-50%) scale(0.8);
+                z-index: 2147483647;
+                display: flex;
+                align-items: center;
+                gap: 15px;
+                padding: 20px 30px;
+                background: rgba(15,15,26,0.95);
+                border-radius: 16px;
+                backdrop-filter: blur(20px);
+                border: 1px solid var(--wp-border);
+                opacity: 0;
+                pointer-events: none;
+                transition: all var(--wp-speed);
+            }
+            #wparty-volume-osd.wparty-osd-visible {
+                opacity: 1;
+                transform: translate(-50%,-50%) scale(1);
+            }
+            .wparty-osd-icon { font-size: 32px; }
+            .wparty-osd-bar {
+                width: 150px;
+                height: 8px;
+                background: var(--wp-bg3);
+                border-radius: 4px;
+                overflow: hidden;
+            }
+            .wparty-osd-fill {
+                height: 100%;
+                background: linear-gradient(90deg, var(--wp-primary), var(--wp-secondary));
+                border-radius: 4px;
+                transition: width 0.1s;
+            }
+            .wparty-osd-value {
+                color: var(--wp-text);
+                font: 600 18px system-ui;
+                min-width: 50px;
+            }
 
-        const panel = document.createElement('div');
-        panel.id = 'wparty-settings-panel';
-        panel.innerHTML = `
-            <div class="wp-header">
-                <div class="wp-title">🎬 WPARTY Auto v${VERSION_INFO.current}</div>
-                <div style="display: flex; gap: 8px;">
-                    <button class="wp-header-btn" id="wp-showlist-btn" title="Мои сериалы">📺</button>
-                    <button class="wp-header-btn" id="wp-toggle-btn" title="Свернуть">▼</button>
-                </div>
-            </div>
-            <div class="wp-content">
-                ${settings.trackWatchTime ? `
-                <div class="wp-section">
-                    <div class="wp-section-title">⏱️ Статистика</div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-                        <div style="text-align: center;">
-                            <div id="wp-time-today" style="font-size: 18px; font-weight: bold; color: #667eea;">0</div>
-                            <div style="font-size: 10px; color: #888;">Сегодня</div>
-                        </div>
-                        <div style="text-align: center;">
-                            <div id="wp-time-week" style="font-size: 18px; font-weight: bold; color: #667eea;">0</div>
-                            <div style="font-size: 10px; color: #888;">За неделю</div>
-                        </div>
-                    </div>
-                    ${settings.showCharts ? `
-                    <div class="wp-chart-container">
-                        <canvas id="wp-stats-chart"></canvas>
-                        <div class="wp-chart-controls">
-                            <button class="wp-chart-btn ${settings.chartType === 'line' ? 'active' : ''}" data-chart="line">Линия</button>
-                            <button class="wp-chart-btn ${settings.chartType === 'bar' ? 'active' : ''}" data-chart="bar">Столбцы</button>
-                        </div>
-                    </div>
-                    ` : ''}
-                </div>
-                ` : ''}
+            #wparty-panel {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 2147483645;
+                width: 340px;
+                background: var(--wp-bg);
+                border-radius: 16px;
+                border: 1px solid var(--wp-border);
+                box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+                font-family: system-ui, sans-serif;
+                overflow: hidden;
+                transition: all var(--wp-speed);
+            }
+            #wparty-panel.collapsed .wparty-body { display: none; }
+            #wparty-panel.collapsed .wparty-footer { display: none; }
 
-                <div class="wp-section">
-                    <div class="wp-section-title">🎬 Автопереключение</div>
-                    <div class="wp-option">
-                        <label for="wp-auto-next">
-                            <span>📺</span>
-                            <span>Следующая серия</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-auto-next" ${settings.autoNext ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    <div class="wp-option">
-                        <label for="wp-auto-season">
-                            <span>📁</span>
-                            <span>Следующий сезон</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-auto-season" ${settings.autoSeason ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                </div>
+            .wparty-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 14px 18px;
+                background: linear-gradient(135deg, var(--wp-primary), var(--wp-secondary));
+                cursor: pointer;
+            }
+            .wparty-logo {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                color: white;
+            }
+            .wparty-logo-icon {
+                font-size: 20px;
+            }
+            .wparty-logo-text {
+                font-weight: 600;
+                font-size: 14px;
+            }
+            .wparty-logo-ver {
+                font-size: 10px;
+                opacity: 0.7;
+            }
+            .wparty-header-btns {
+                display: flex;
+                gap: 8px;
+            }
+            .wparty-hbtn {
+                width: 30px;
+                height: 30px;
+                border: none;
+                background: rgba(255,255,255,0.15);
+                color: white;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: all 0.2s;
+            }
+            .wparty-hbtn:hover {
+                background: rgba(255,255,255,0.25);
+                transform: scale(1.05);
+            }
 
-                <div class="wp-section">
-                    <div class="wp-section-title">⏭️ Пропуск титров</div>
-                    <div class="wp-option">
-                        <label for="wp-skip-credits">
-                            <span>⏭️</span>
-                            <span>Пропускать титры</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-skip-credits" ${settings.skipCredits ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    ${settings.skipCredits ? `
-                    <div class="wp-option" style="flex-direction: column; align-items: flex-start;">
-                        <label style="margin-bottom: 8px;"><span>🎯</span><span>Режим пропуска</span></label>
-                        <div class="wp-radio-group" style="width: 100%;">
-                            <div class="wp-radio-btn ${settings.skipMode === 'percent' ? 'active' : ''}" data-mode="percent">
-                                По проценту
-                            </div>
-                            <div class="wp-radio-btn ${settings.skipMode === 'seconds' ? 'active' : ''}" data-mode="seconds">
-                                По времени
-                            </div>
-                        </div>
-                    </div>
-                    ${settings.skipMode === 'percent' ? `
-                    <div class="wp-option">
-                        <label><span>📊</span><span>Процент видео</span></label>
-                        <input type="number" class="wp-input" id="wp-skip-percent" value="${settings.skipPercent}" min="50" max="99" step="1">
-                    </div>
-                    ` : `
-                    <div class="wp-option">
-                        <label><span>⏱️</span><span>Секунд до конца</span></label>
-                        <input type="number" class="wp-input" id="wp-skip-seconds" value="${settings.skipSeconds}" min="10" max="300" step="5">
-                    </div>
-                    `}
-                    ` : ''}
-                </div>
+            .wparty-tabs {
+                display: flex;
+                background: var(--wp-bg2);
+                padding: 6px;
+                gap: 4px;
+            }
+            .wparty-tab {
+                flex: 1;
+                padding: 8px;
+                border: none;
+                background: transparent;
+                color: var(--wp-muted);
+                font-size: 11px;
+                font-weight: 500;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.2s;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 3px;
+            }
+            .wparty-tab:hover { background: var(--wp-bg3); color: var(--wp-text); }
+            .wparty-tab.active { background: var(--wp-primary); color: white; }
+            .wparty-tab-icon { font-size: 14px; }
 
-                <div class="wp-section">
-                    <div class="wp-section-title">🔊 Громкость</div>
-                    <div class="wp-option">
-                        <label for="wp-volume-control">
-                            <span>🔊</span>
-                            <span>Управление громкостью</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-volume-control" ${settings.volumeControl ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    ${settings.volumeControl ? `
-                    <div class="wp-option">
-                        <label for="wp-volume-osd">
-                            <span>📺</span>
-                            <span>OSD индикатор</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-volume-osd" ${settings.volumeOSD ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    <div class="wp-option">
-                        <label for="wp-volume-sync">
-                            <span>🔗</span>
-                            <span>Синхронизация вкладок</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-volume-sync" ${settings.volumeSync ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    ` : ''}
-                </div>
+            .wparty-body {
+                max-height: 55vh;
+                overflow-y: auto;
+                padding: 14px;
+            }
+            .wparty-body::-webkit-scrollbar { width: 5px; }
+            .wparty-body::-webkit-scrollbar-thumb { background: var(--wp-bg3); border-radius: 3px; }
 
-                <div class="wp-section">
-                    <div class="wp-section-title">⚙️ Интерфейс</div>
-                    <div class="wp-option">
-                        <label for="wp-animations">
-                            <span>✨</span>
-                            <span>Анимации</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-animations" ${settings.animations ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    ${settings.animations ? `
-                    <div class="wp-option">
-                        <label><span>⚡</span><span>Скорость анимаций</span></label>
-                        <select class="wp-select" id="wp-transition-speed">
-                            <option value="slow" ${settings.transitionSpeed === 'slow' ? 'selected' : ''}>Медленно</option>
-                            <option value="normal" ${settings.transitionSpeed === 'normal' ? 'selected' : ''}>Обычно</option>
-                            <option value="fast" ${settings.transitionSpeed === 'fast' ? 'selected' : ''}>Быстро</option>
-                        </select>
-                    </div>
-                    ` : ''}
-                    <div class="wp-option">
-                        <label for="wp-notifications">
-                            <span>🔔</span>
-                            <span>Уведомления</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-notifications" ${settings.showNotifications ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                    <div class="wp-option">
-                        <label for="wp-track-time">
-                            <span>⏱️</span>
-                            <span>Считать время</span>
-                        </label>
-                        <div class="wp-switch">
-                            <input type="checkbox" id="wp-track-time" ${settings.trackWatchTime ? 'checked' : ''}>
-                            <span class="wp-slider"></span>
-                        </div>
-                    </div>
-                </div>
+            .wparty-content { display: none; }
+            .wparty-content.active { display: block; }
 
-                <div class="wp-version">
-                    v${VERSION_INFO.current} • ${VERSION_INFO.releaseDate}
-                    <br>
-                    <a href="https://github.com/DdepRest/wparty-auto-" target="_blank" style="color: #667eea;">GitHub</a> •
-                    <a href="https://github.com/DdepRest/wparty-auto-/issues" target="_blank" style="color: #667eea;">Поддержка</a>
-                </div>
-            </div>
+            .wparty-stats-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+                margin-bottom: 14px;
+            }
+            .wparty-stat {
+                background: var(--wp-bg2);
+                border-radius: 12px;
+                padding: 14px;
+                text-align: center;
+                border: 1px solid var(--wp-border);
+            }
+            .wparty-stat-val {
+                font-size: 22px;
+                font-weight: 700;
+                background: linear-gradient(135deg, var(--wp-primary), var(--wp-secondary));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .wparty-stat-lbl {
+                font-size: 10px;
+                color: var(--wp-muted);
+                margin-top: 4px;
+                text-transform: uppercase;
+            }
+
+            .wparty-chart-box {
+                background: var(--wp-bg2);
+                border-radius: 12px;
+                padding: 14px;
+                border: 1px solid var(--wp-border);
+            }
+            .wparty-chart-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+            }
+            .wparty-chart-title {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--wp-text);
+            }
+            .wparty-chart-btns { display: flex; gap: 4px; }
+            .wparty-cbtn {
+                padding: 5px 8px;
+                border: none;
+                background: var(--wp-bg3);
+                color: var(--wp-muted);
+                font-size: 10px;
+                border-radius: 5px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .wparty-cbtn:hover { color: var(--wp-text); }
+            .wparty-cbtn.active { background: var(--wp-primary); color: white; }
+            #wparty-chart { width: 100%; height: 120px; }
+
+            .wparty-section { margin-bottom: 16px; }
+            .wparty-section:last-child { margin-bottom: 0; }
+            .wparty-section-title {
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--wp-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 10px;
+                padding-left: 2px;
+            }
+
+            .wparty-opt {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 12px 14px;
+                background: var(--wp-bg2);
+                border-radius: 10px;
+                margin-bottom: 6px;
+                border: 1px solid var(--wp-border);
+                transition: all 0.2s;
+            }
+            .wparty-opt:hover { border-color: var(--wp-primary); }
+            .wparty-opt-info { display: flex; align-items: center; gap: 10px; }
+            .wparty-opt-icon {
+                width: 32px;
+                height: 32px;
+                background: var(--wp-bg3);
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+            }
+            .wparty-opt-txt { display: flex; flex-direction: column; gap: 1px; }
+            .wparty-opt-title { font-size: 12px; font-weight: 500; color: var(--wp-text); }
+            .wparty-opt-desc { font-size: 10px; color: var(--wp-muted); }
+
+            .wparty-toggle {
+                position: relative;
+                width: 42px;
+                height: 24px;
+            }
+            .wparty-toggle input { opacity: 0; width: 0; height: 0; }
+            .wparty-toggle-slider {
+                position: absolute;
+                cursor: pointer;
+                inset: 0;
+                background: var(--wp-bg3);
+                border-radius: 24px;
+                transition: all 0.3s;
+            }
+            .wparty-toggle-slider:before {
+                content: "";
+                position: absolute;
+                height: 18px;
+                width: 18px;
+                left: 3px;
+                bottom: 3px;
+                background: white;
+                border-radius: 50%;
+                transition: all 0.3s cubic-bezier(0.68,-0.55,0.265,1.55);
+            }
+            .wparty-toggle input:checked + .wparty-toggle-slider {
+                background: linear-gradient(135deg, var(--wp-primary), var(--wp-secondary));
+            }
+            .wparty-toggle input:checked + .wparty-toggle-slider:before {
+                transform: translateX(18px);
+            }
+
+            .wparty-select {
+                padding: 6px 10px;
+                background: var(--wp-bg3);
+                border: 1px solid var(--wp-border);
+                border-radius: 6px;
+                color: var(--wp-text);
+                font-size: 11px;
+                cursor: pointer;
+                outline: none;
+            }
+            .wparty-select option { background: var(--wp-bg); }
+
+            .wparty-input {
+                width: 60px;
+                padding: 6px 10px;
+                background: var(--wp-bg3);
+                border: 1px solid var(--wp-border);
+                border-radius: 6px;
+                color: var(--wp-text);
+                font-size: 11px;
+                text-align: center;
+                outline: none;
+            }
+
+            .wparty-segs {
+                display: flex;
+                background: var(--wp-bg3);
+                border-radius: 8px;
+                padding: 3px;
+                margin-bottom: 10px;
+            }
+            .wparty-seg {
+                flex: 1;
+                padding: 8px;
+                border: none;
+                background: transparent;
+                color: var(--wp-muted);
+                font-size: 11px;
+                font-weight: 500;
+                border-radius: 6px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .wparty-seg:hover { color: var(--wp-text); }
+            .wparty-seg.active { background: var(--wp-primary); color: white; }
+
+            .wparty-footer {
+                padding: 10px 18px;
+                background: var(--wp-bg2);
+                border-top: 1px solid var(--wp-border);
+                text-align: center;
+            }
+            .wparty-footer-links { display: flex; justify-content: center; gap: 14px; }
+            .wparty-footer-link {
+                color: var(--wp-muted);
+                text-decoration: none;
+                font-size: 10px;
+                transition: color 0.2s;
+            }
+            .wparty-footer-link:hover { color: var(--wp-primary); }
+
+            .wparty-modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.8);
+                backdrop-filter: blur(8px);
+                z-index: 2147483647;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                opacity: 0;
+                transition: opacity var(--wp-speed);
+            }
+            .wparty-modal.visible { opacity: 1; }
+            .wparty-modal-box {
+                background: var(--wp-bg);
+                border-radius: 20px;
+                width: 90%;
+                max-width: 450px;
+                max-height: 75vh;
+                overflow: hidden;
+                border: 1px solid var(--wp-border);
+                transform: scale(0.9) translateY(20px);
+                transition: transform var(--wp-speed);
+            }
+            .wparty-modal.visible .wparty-modal-box {
+                transform: scale(1) translateY(0);
+            }
+            .wparty-modal-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 18px 20px;
+                background: linear-gradient(135deg, var(--wp-primary), var(--wp-secondary));
+            }
+            .wparty-modal-title { color: white; font-size: 16px; font-weight: 600; }
+            .wparty-modal-close {
+                width: 32px;
+                height: 32px;
+                border: none;
+                background: rgba(255,255,255,0.2);
+                color: white;
+                border-radius: 50%;
+                cursor: pointer;
+                font-size: 16px;
+                transition: all 0.2s;
+            }
+            .wparty-modal-close:hover { background: rgba(255,255,255,0.3); transform: scale(1.1); }
+            .wparty-modal-body { padding: 18px; max-height: 55vh; overflow-y: auto; }
+
+            .wparty-show {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+                padding: 14px;
+                background: var(--wp-bg2);
+                border-radius: 12px;
+                margin-bottom: 8px;
+                cursor: pointer;
+                border: 1px solid var(--wp-border);
+                transition: all 0.2s;
+            }
+            .wparty-show:hover { border-color: var(--wp-primary); transform: translateX(4px); }
+            .wparty-show-icon {
+                width: 42px;
+                height: 42px;
+                background: var(--wp-bg3);
+                border-radius: 10px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 20px;
+            }
+            .wparty-show-info { flex: 1; }
+            .wparty-show-name { font-size: 13px; font-weight: 500; color: var(--wp-text); }
+            .wparty-show-prog { font-size: 11px; color: var(--wp-muted); margin-top: 2px; }
+            .wparty-show-arrow { color: var(--wp-muted); }
+
+            .wparty-empty {
+                text-align: center;
+                padding: 30px;
+                color: var(--wp-muted);
+            }
+            .wparty-empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+            .wparty-empty-text { font-size: 13px; }
         `;
+        const style = document.createElement('style');
+        style.textContent = css;
+        document.head.appendChild(style);
+    };
 
-        document.body.appendChild(panel);
+    // ═══════════════════════════════════════════════════════════
+    // UI ПАНЕЛЬ
+    // ═══════════════════════════════════════════════════════════
 
-        document.getElementById('wp-toggle-btn').addEventListener('click', () => {
-            panel.classList.toggle('collapsed');
-        });
+    const Panel = {
+        create() {
+            if (!State.settings.showPanel) return;
+            $('#wparty-panel')?.remove();
 
-        document.getElementById('wp-showlist-btn').addEventListener('click', () => {
-            if (!showListOpen) createShowListModal();
-        });
+            const s = State.settings;
+            const panel = document.createElement('div');
+            panel.id = 'wparty-panel';
+            panel.innerHTML = `
+                <div class="wparty-header">
+                    <div class="wparty-logo">
+                        <span class="wparty-logo-icon">🎬</span>
+                        <div>
+                            <div class="wparty-logo-text">WPARTY Auto</div>
+                            <div class="wparty-logo-ver">v${CONFIG.version}</div>
+                        </div>
+                    </div>
+                    <div class="wparty-header-btns">
+                        <button class="wparty-hbtn" id="wp-shows-btn" title="Мои сериалы">📺</button>
+                        <button class="wparty-hbtn" id="wp-toggle-btn" title="Свернуть">▼</button>
+                    </div>
+                </div>
 
-        document.querySelectorAll('.wp-radio-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const mode = btn.dataset.mode;
-                saveSettings({ skipMode: mode });
-                panel.remove();
-                setTimeout(() => createSettingsPanel(), 100);
+                <div class="wparty-body">
+                    <div class="wparty-tabs">
+                        <button class="wparty-tab ${State.activeTab === 'stats' ? 'active' : ''}" data-tab="stats">
+                            <span class="wparty-tab-icon">📊</span>
+                            <span>Статистика</span>
+                        </button>
+                        <button class="wparty-tab ${State.activeTab === 'auto' ? 'active' : ''}" data-tab="auto">
+                            <span class="wparty-tab-icon">⚡</span>
+                            <span>Авто</span>
+                        </button>
+                        <button class="wparty-tab ${State.activeTab === 'settings' ? 'active' : ''}" data-tab="settings">
+                            <span class="wparty-tab-icon">⚙️</span>
+                            <span>Настройки</span>
+                        </button>
+                    </div>
+
+                    <div class="wparty-content ${State.activeTab === 'stats' ? 'active' : ''}" data-content="stats">
+                        <div class="wparty-stats-grid">
+                            <div class="wparty-stat">
+                                <div class="wparty-stat-val" id="wp-stat-today">0</div>
+                                <div class="wparty-stat-lbl">Сегодня</div>
+                            </div>
+                            <div class="wparty-stat">
+                                <div class="wparty-stat-val" id="wp-stat-week">0</div>
+                                <div class="wparty-stat-lbl">За неделю</div>
+                            </div>
+                        </div>
+                        <div class="wparty-chart-box">
+                            <div class="wparty-chart-head">
+                                <span class="wparty-chart-title">Активность</span>
+                                <div class="wparty-chart-btns">
+                                    <button class="wparty-cbtn ${s.chartType === 'line' ? 'active' : ''}" data-chart="line">📈</button>
+                                    <button class="wparty-cbtn ${s.chartType === 'bar' ? 'active' : ''}" data-chart="bar">📊</button>
+                                </div>
+                            </div>
+                            <canvas id="wparty-chart" width="260" height="120"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="wparty-content ${State.activeTab === 'auto' ? 'active' : ''}" data-content="auto">
+                        <div class="wparty-section">
+                            <div class="wparty-section-title">Автопереключение</div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">▶️</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Следующая серия</div>
+                                        <div class="wparty-opt-desc">Автоматически</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-autoNext" ${s.autoNext ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">📂</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Следующий сезон</div>
+                                        <div class="wparty-opt-desc">Переходить</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-autoSeason" ${s.autoSeason ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="wparty-section">
+                            <div class="wparty-section-title">Пропуск титров</div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">⏭️</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Пропускать титры</div>
+                                        <div class="wparty-opt-desc">Умный переход</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-skipCredits" ${s.skipCredits ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                            ${s.skipCredits ? `
+                            <div class="wparty-segs">
+                                <button class="wparty-seg ${s.skipMode === 'percent' ? 'active' : ''}" data-mode="percent">По проценту</button>
+                                <button class="wparty-seg ${s.skipMode === 'seconds' ? 'active' : ''}" data-mode="seconds">По времени</button>
+                            </div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">${s.skipMode === 'percent' ? '📊' : '⏱️'}</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">${s.skipMode === 'percent' ? 'Процент' : 'Секунд до конца'}</div>
+                                    </div>
+                                </div>
+                                <input type="number" class="wparty-input" id="opt-skipValue"
+                                    value="${s.skipMode === 'percent' ? s.skipPercent : s.skipSeconds}"
+                                    min="${s.skipMode === 'percent' ? 50 : 10}"
+                                    max="${s.skipMode === 'percent' ? 99 : 300}">
+                            </div>
+                            ` : ''}
+                        </div>
+
+                        <div class="wparty-section">
+                            <div class="wparty-section-title">Громкость</div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">🔊</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Управление</div>
+                                        <div class="wparty-opt-desc">Сохранять уровень</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-volumeControl" ${s.volumeControl ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                            ${s.volumeControl ? `
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">📺</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">OSD</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-volumeOSD" ${s.volumeOSD ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="wparty-content ${State.activeTab === 'settings' ? 'active' : ''}" data-content="settings">
+                        <div class="wparty-section">
+                            <div class="wparty-section-title">Интерфейс</div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">✨</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Анимации</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-animations" ${s.animations ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">🔔</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Уведомления</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-showNotifications" ${s.showNotifications ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="wparty-opt">
+                                <div class="wparty-opt-info">
+                                    <div class="wparty-opt-icon">⏱️</div>
+                                    <div class="wparty-opt-txt">
+                                        <div class="wparty-opt-title">Статистика</div>
+                                    </div>
+                                </div>
+                                <label class="wparty-toggle">
+                                    <input type="checkbox" id="opt-trackWatchTime" ${s.trackWatchTime ? 'checked' : ''}>
+                                    <span class="wparty-toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="wparty-footer">
+                    <div class="wparty-footer-links">
+                        <a href="https://github.com/DdepRest/wparty-auto-" target="_blank" class="wparty-footer-link">GitHub</a>
+                        <a href="https://github.com/DdepRest/wparty-auto-/issues" target="_blank" class="wparty-footer-link">Поддержка</a>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(panel);
+            this.bindEvents();
+            this.updateStats();
+        },
+
+        bindEvents() {
+            const panel = $('#wparty-panel');
+            if (!panel) return;
+
+            $('#wp-toggle-btn')?.addEventListener('click', e => {
+                e.stopPropagation();
+                panel.classList.toggle('collapsed');
             });
-        });
 
-        document.querySelectorAll('.wp-chart-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const type = btn.dataset.chart;
-                saveSettings({ chartType: type });
-                updateWatchTimeDisplay();
-
-                document.querySelectorAll('.wp-chart-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
+            $('#wp-shows-btn')?.addEventListener('click', e => {
+                e.stopPropagation();
+                this.showWatchList();
             });
-        });
 
-        const bindSetting = (id, key, isNumber = false, isSelect = false) => {
-            const element = document.getElementById(id);
-            if (!element) return;
+            $$('.wparty-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const name = tab.dataset.tab;
+                    State.activeTab = name;
+                    $$('.wparty-tab').forEach(t => t.classList.remove('active'));
+                    $$('.wparty-content').forEach(c => c.classList.remove('active'));
+                    tab.classList.add('active');
+                    $(`[data-content="${name}"]`)?.classList.add('active');
+                });
+            });
 
-            const eventType = isSelect ? 'change' : (isNumber ? 'input' : 'change');
+            $$('.wparty-cbtn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    Storage.saveSettings({ chartType: btn.dataset.chart });
+                    $$('.wparty-cbtn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    this.updateStats();
+                });
+            });
 
-            element.addEventListener(eventType, () => {
-                let value;
-                if (isSelect) {
-                    value = isNaN(parseFloat(element.value)) ? element.value : parseFloat(element.value);
-                } else if (isNumber) {
-                    value = parseInt(element.value) || DEFAULTS[key];
-                } else {
-                    value = element.checked;
+            $$('.wparty-seg').forEach(seg => {
+                seg.addEventListener('click', () => {
+                    Storage.saveSettings({ skipMode: seg.dataset.mode });
+                    this.create();
+                });
+            });
+
+            const bind = (id, key, refresh = false) => {
+                $(`#opt-${id}`)?.addEventListener('change', e => {
+                    Storage.saveSettings({ [key]: e.target.checked });
+                    if (refresh) this.create();
+                    if (key === 'volumeControl' && e.target.checked) {
+                        Volume.hookControls();
+                        Volume.apply();
+                    }
+                });
+            };
+
+            bind('autoNext', 'autoNext');
+            bind('autoSeason', 'autoSeason');
+            bind('skipCredits', 'skipCredits', true);
+            bind('volumeControl', 'volumeControl', true);
+            bind('volumeOSD', 'volumeOSD');
+            bind('animations', 'animations', true);
+            bind('showNotifications', 'showNotifications');
+            bind('trackWatchTime', 'trackWatchTime', true);
+
+            $('#opt-skipValue')?.addEventListener('change', e => {
+                const key = State.settings.skipMode === 'percent' ? 'skipPercent' : 'skipSeconds';
+                Storage.saveSettings({ [key]: parseInt(e.target.value) });
+            });
+        },
+
+        updateStats() {
+            const stats = Storage.getWatchTimeStats();
+            const today = $('#wp-stat-today');
+            const week = $('#wp-stat-week');
+            if (today) today.textContent = formatTime(stats.today);
+            if (week) week.textContent = formatTime(stats.week);
+            Charts.draw('wparty-chart', stats.weekData);
+        },
+
+        showWatchList() {
+            if (State.showListOpen) return;
+            const history = Storage.getWatchHistory();
+            const shows = Object.entries(history)
+                .map(([id, d]) => ({ id, ...d }))
+                .sort((a, b) => b.timestamp - a.timestamp);
+
+            const modal = document.createElement('div');
+            modal.className = 'wparty-modal';
+            modal.innerHTML = `
+                <div class="wparty-modal-box">
+                    <div class="wparty-modal-head">
+                        <span class="wparty-modal-title">📺 Мои сериалы</span>
+                        <button class="wparty-modal-close">✕</button>
+                    </div>
+                    <div class="wparty-modal-body">
+                        ${shows.length === 0 ? `
+                            <div class="wparty-empty">
+                                <div class="wparty-empty-icon">📺</div>
+                                <div class="wparty-empty-text">Список пуст</div>
+                            </div>
+                        ` : shows.map(s => `
+                            <div class="wparty-show" data-url="${s.url}">
+                                <div class="wparty-show-icon">🎬</div>
+                                <div class="wparty-show-info">
+                                    <div class="wparty-show-name">${s.name || 'Неизвестный'}</div>
+                                    <div class="wparty-show-prog">Сезон ${s.season || 1}, Серия ${s.episode || 1}</div>
+                                </div>
+                                <span class="wparty-show-arrow">→</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+            State.showListOpen = true;
+            requestAnimationFrame(() => modal.classList.add('visible'));
+
+            const close = () => {
+                modal.classList.remove('visible');
+                setTimeout(() => { modal.remove(); State.showListOpen = false; }, 300);
+            };
+
+            modal.querySelector('.wparty-modal-close').addEventListener('click', close);
+            modal.addEventListener('click', e => { if (e.target === modal) close(); });
+            modal.querySelectorAll('.wparty-show').forEach(s => {
+                s.addEventListener('click', () => { window.location.href = s.dataset.url; });
+            });
+        }
+    };
+
+    // ═══════════════════════════════════════════════════════════
+    // РЕЖИМ ПЛЕЕРА
+    // ═══════════════════════════════════════════════════════════
+
+    const runPlayerMode = () => {
+        log('Режим ПЛЕЕРА (iframe)');
+
+        let lastSave = Date.now();
+
+        const getProgress = () => {
+            const seek = $seekSlider();
+            if (!seek) return null;
+            const cur = parseFloat(seek.getAttribute('aria-valuenow')) || 0;
+            const max = parseFloat(seek.getAttribute('aria-valuemax')) || 0;
+            return max > 0 ? { cur, max } : null;
+        };
+
+        const notifyParent = (remaining = null) => {
+            try { window.parent.postMessage({ type: 'WPARTY_NEXT_EPISODE', remaining }, '*'); } catch {}
+        };
+
+        const sendWatchTime = () => {
+            const elapsed = (Date.now() - lastSave) / 1000;
+            try { window.parent.postMessage({ type: 'WPARTY_WATCH_TIME', seconds: elapsed }, '*'); } catch {}
+            lastSave = Date.now();
+        };
+
+        State.intervals.progress = setInterval(() => {
+            const prog = getProgress();
+            if (!prog || State.hasTriggered) return;
+            const video = $video();
+            if (!video) return;
+            if (Credits.shouldSkip(video.currentTime, video.duration)) {
+                State.hasTriggered = true;
+                log('Пропуск титров!', 'success');
+                notifyParent(video.duration - video.currentTime);
+                setTimeout(() => { State.hasTriggered = false; }, 15000);
+            }
+        }, CONFIG.intervals.check);
+
+        if (State.settings.trackWatchTime) {
+            State.intervals.watchTime = setInterval(sendWatchTime, CONFIG.intervals.watchTime);
+        }
+
+        if (State.settings.volumeControl) {
+            setTimeout(() => { Volume.hookControls(); Volume.apply(true); }, 1000);
+            setTimeout(() => Volume.apply(false), 3000);
+            setTimeout(() => Volume.apply(false), 5000);
+        }
+
+        log('Мониторинг запущен', 'success');
+    };
+
+    // ═══════════════════════════════════════════════════════════
+    // РЕЖИМ ОСНОВНОЙ СТРАНИЦЫ
+    // ═══════════════════════════════════════════════════════════
+
+    const runMainMode = () => {
+        log('Режим ОСНОВНОЙ СТРАНИЦЫ');
+        State.currentShowId = getShowId();
+
+        const getSeasonEpisode = () => {
+            let season = 1, episode = 1;
+            const seasonDrop = $('div[name="season"]');
+            if (seasonDrop) {
+                const menu = seasonDrop.querySelector('.menu');
+                if (menu) {
+                    const all = [...menu.querySelectorAll('.item')];
+                    const cur = menu.querySelector('.item.active.selected');
+                    if (cur) season = all.indexOf(cur) + 1;
                 }
-
-                saveSettings({ [key]: value });
-
-                const keysToReload = ['skipCredits', 'volumeControl', 'trackWatchTime', 'animations'];
-                if (keysToReload.includes(key)) {
-                    panel.remove();
-                    setTimeout(() => createSettingsPanel(), 100);
+            }
+            const epDrop = $('div[name="episode"]');
+            if (epDrop) {
+                const menu = epDrop.querySelector('.menu');
+                if (menu) {
+                    const all = [...menu.querySelectorAll('.item')];
+                    const cur = menu.querySelector('.item.active.selected');
+                    if (cur) episode = all.indexOf(cur) + 1;
                 }
+            }
+            return { season, episode };
+        };
 
-                if (key === 'volumeControl' && value) {
-                    hookVolumeControls();
-                    applyVolume();
-                }
+        const getEpisodeInfo = () => {
+            const drop = $('div[name="episode"]');
+            if (!drop) return null;
+            const menu = drop.querySelector('.menu');
+            if (!menu) return null;
+            const all = [...menu.querySelectorAll('.item')];
+            const cur = menu.querySelector('.item.active.selected');
+            if (!all.length || !cur) return null;
+            const idx = all.indexOf(cur);
+            return {
+                total: all.length,
+                current: idx + 1,
+                isLast: idx === all.length - 1,
+                next: idx < all.length - 1 ? all[idx + 1] : null,
+                dropdown: drop
+            };
+        };
 
-                if (key === 'volumeSync') {
-                    if (value) initVolumeSync();
-                    else if (volumeState.volumeChannel) volumeState.volumeChannel.close();
-                }
-
-                if (key === 'chartType') {
-                    updateWatchTimeDisplay();
-                }
+        const switchNext = async () => {
+            if (!State.settings.autoNext) return false;
+            const info = getEpisodeInfo();
+            if (!info) return false;
+            if (info.isLast) {
+                notify('🏁 Сезон завершён!', 'success', 5000);
+                return false;
+            }
+            info.dropdown.click();
+            return new Promise(res => {
+                setTimeout(() => {
+                    if (info.next) {
+                        info.next.click();
+                        const { season, episode } = getSeasonEpisode();
+                        Storage.saveWatchHistory(season, episode + 1);
+                        notify('📺 Следующая серия', 'success');
+                        res(true);
+                    } else res(false);
+                }, 500);
             });
         };
 
-        bindSetting('wp-auto-next', 'autoNext');
-        bindSetting('wp-auto-season', 'autoSeason');
-        bindSetting('wp-skip-credits', 'skipCredits');
-        bindSetting('wp-skip-percent', 'skipPercent', true);
-        bindSetting('wp-skip-seconds', 'skipSeconds', true);
-        bindSetting('wp-volume-control', 'volumeControl');
-        bindSetting('wp-volume-osd', 'volumeOSD');
-        bindSetting('wp-volume-sync', 'volumeSync');
-        bindSetting('wp-animations', 'animations');
-        bindSetting('wp-transition-speed', 'transitionSpeed', false, true);
-        bindSetting('wp-notifications', 'showNotifications');
-        bindSetting('wp-track-time', 'trackWatchTime');
-
-        updateWatchTimeDisplay();
-        checkForUpdates();
-    }
-
-    // ============ РЕЖИМ ПЛЕЕРА ============
-
-    function runPlayerMode() {
-        log('🎮 Режим ПЛЕЕРА (iframe)');
-
-        let lastWatchTimeSave = Date.now();
-
-        function getProgress() {
-            const seek = document.querySelector('input[data-allplay="seek"]');
-            if (!seek) return null;
-
-            const current = parseFloat(seek.getAttribute('aria-valuenow')) || 0;
-            const max = parseFloat(seek.getAttribute('aria-valuemax')) || 0;
-
-            if (max <= 0) return null;
-            return { current, max, remainingTime: max - current };
-        }
-
-        function notifyParent(remainingSeconds = null) {
-            try {
-                window.parent.postMessage({ type: 'WPARTY_NEXT_EPISODE', remainingSeconds }, '*');
-            } catch(e) {}
-        }
-
-        function sendWatchTime() {
-            const elapsed = (Date.now() - lastWatchTimeSave) / 1000;
-            try {
-                window.parent.postMessage({ type: 'WPARTY_WATCH_TIME', seconds: elapsed }, '*');
-            } catch(e) {}
-            lastWatchTimeSave = Date.now();
-        }
-
-        progressInterval = setInterval(() => {
-            const progress = getProgress();
-            if (!progress || hasTriggered) return;
-
-            const video = findVideo();
-            if (!video) return;
-
-            if (shouldSkipCredits(video.currentTime, video.duration)) {
-                hasTriggered = true;
-                const info = getSkipInfo(video.currentTime, video.duration);
-                log(`⏭️ Пропуск титров: ${info.info}`);
-                notifyParent(video.duration - video.currentTime);
-                setTimeout(() => { hasTriggered = false; }, 15000);
-            }
-        }, CHECK_INTERVAL);
-
-        if (settings.trackWatchTime) {
-            watchTimeInterval = setInterval(sendWatchTime, WATCH_TIME_INTERVAL);
-        }
-
-        if (settings.volumeControl) {
-            // Первичное применение громкости с задержкой
-            setTimeout(() => {
-                hookVolumeControls();
-                applyVolume(true);
-            }, 1000);
-
-            // Повторное применение через 2 секунды (на случай если плеер загружается медленно)
-            setTimeout(() => {
-                applyVolume(false);
-            }, 2000);
-
-            // Ещё раз через 4 секунды
-            setTimeout(() => {
-                applyVolume(false);
-            }, 4000);
-
-            // И финально через 6 секунд
-            setTimeout(() => {
-                applyVolume(false);
-            }, 6000);
-        }
-
-        log('✅ Мониторинг запущен');
-    }
-
-    // ============ РЕЖИМ ОСНОВНОЙ СТРАНИЦЫ ============
-
-    function runMainMode() {
-        log('🌐 Режим ОСНОВНОЙ СТРАНИЦЫ');
-
-        currentShowId = generateShowId();
-
-        function getCurrentSeasonEpisode() {
-            let season = 1;
-            let episode = 1;
-
-            const seasonDropdown = document.querySelector('div[name="season"]');
-            if (seasonDropdown) {
-                const seasonMenu = seasonDropdown.querySelector('.menu');
-                if (seasonMenu) {
-                    const allSeasons = Array.from(seasonMenu.querySelectorAll('.item'));
-                    const currentSeason = seasonMenu.querySelector('.item.active.selected');
-                    if (currentSeason) {
-                        season = allSeasons.indexOf(currentSeason) + 1;
-                    }
-                }
-            }
-
-            const episodeDropdown = document.querySelector('div[name="episode"]');
-            if (episodeDropdown) {
-                const episodeMenu = episodeDropdown.querySelector('.menu');
-                if (episodeMenu) {
-                    const allEpisodes = Array.from(episodeMenu.querySelectorAll('.item'));
-                    const currentEpisode = episodeMenu.querySelector('.item.active.selected');
-                    if (currentEpisode) {
-                        episode = allEpisodes.indexOf(currentEpisode) + 1;
-                    }
-                }
-            }
-
-            return { season, episode };
-        }
-
-        function getEpisodeInfo() {
-            const episodeDropdown = document.querySelector('div[name="episode"]');
-            if (!episodeDropdown) return null;
-
-            const menu = episodeDropdown.querySelector('.menu');
-            if (!menu) return null;
-
-            const allEpisodes = Array.from(menu.querySelectorAll('.item'));
-            const currentEpisode = menu.querySelector('.item.active.selected');
-
-            if (!allEpisodes.length || !currentEpisode) return null;
-
-            let currentIndex = allEpisodes.indexOf(currentEpisode);
-            let nextEpisode = currentIndex < allEpisodes.length - 1 ? allEpisodes[currentIndex + 1] : null;
-
-            return {
-                total: allEpisodes.length,
-                currentNumber: currentIndex + 1,
-                isLastEpisode: currentIndex === allEpisodes.length - 1,
-                nextElement: nextEpisode,
-                dropdown: episodeDropdown
-            };
-        }
-
-        async function switchToNextEpisode(remainingSeconds = null) {
-            if (!settings.autoNext) return false;
-
-            const info = getEpisodeInfo();
-            if (!info) return false;
-
-            if (info.isLastEpisode) {
-                showNotification('🏁 Сезон завершён!', 'success', 5000);
-                return false;
-            }
-
-            info.dropdown.click();
-
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    if (info.nextElement) {
-                        info.nextElement.click();
-
-                        const { season, episode } = getCurrentSeasonEpisode();
-                        saveWatchHistory(season, episode + 1);
-
-                        showNotification('📺 Следующая серия', 'success');
-                        resolve(true);
-                    } else {
-                        resolve(false);
-                    }
-                }, 500);
-            });
-        }
-
-        window.addEventListener('message', (event) => {
-            if (!isTrustedOrigin(event.origin)) return;
-
-            if (event.data?.type === 'WPARTY_NEXT_EPISODE') {
-                switchToNextEpisode(event.data.remainingSeconds);
-            }
-
-            if (event.data?.type === 'WPARTY_WATCH_TIME') {
-                addWatchTime(event.data.seconds);
-                updateWatchTimeDisplay();
+        window.addEventListener('message', e => {
+            if (!isTrustedOrigin(e.origin)) return;
+            if (e.data?.type === 'WPARTY_NEXT_EPISODE') switchNext();
+            if (e.data?.type === 'WPARTY_WATCH_TIME') {
+                Storage.addWatchTime(e.data.seconds);
+                Panel.updateStats();
             }
         });
 
         setTimeout(() => {
-            createSettingsPanel();
-
-            const { season, episode } = getCurrentSeasonEpisode();
-            saveWatchHistory(season, episode);
-
-            if (settings.volumeControl) {
-                initVolumeSync();
-            }
+            Panel.create();
+            const { season, episode } = getSeasonEpisode();
+            Storage.saveWatchHistory(season, episode);
         }, 2000);
-    }
+    };
 
-    // ============ ИНИЦИАЛИЗАЦИЯ ============
+    // ═══════════════════════════════════════════════════════════
+    // ОЧИСТКА
+    // ═══════════════════════════════════════════════════════════
 
-    function init() {
-        settings = loadSettings();
+    const cleanup = () => {
+        Object.values(State.intervals).forEach(i => i && clearInterval(i));
+        State.volume.observer?.disconnect();
+        State.volume.channel?.close();
+        log('Ресурсы очищены');
+    };
 
-        log(`=== СТАРТ ===`);
-        log(`⚙️ Авто: ${settings.autoNext}, Титры: ${settings.skipCredits}, Громкость: ${settings.volumeControl}`);
+    // ═══════════════════════════════════════════════════════════
+    // ИНИЦИАЛИЗАЦИЯ
+    // ═══════════════════════════════════════════════════════════
+
+    const init = () => {
+        State.settings = Storage.loadSettings();
+        log('=== СТАРТ ===');
+        log(`Авто: ${State.settings.autoNext}, Титры: ${State.settings.skipCredits}, Громкость: ${State.settings.volumeControl}`);
 
         injectStyles();
         window.addEventListener('beforeunload', cleanup);
 
-        const isPlayer = window.location.hostname.includes('stloadi.live') ||
-                        document.querySelector('input[data-allplay="seek"]');
-
-        if (isPlayer) {
-            runPlayerMode();
-        } else {
-            runMainMode();
-        }
-    }
+        const isPlayer = window.location.hostname.includes('stloadi.live') || $seekSlider();
+        if (isPlayer) runPlayerMode();
+        else runMainMode();
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
