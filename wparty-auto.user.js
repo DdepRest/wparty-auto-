@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WPARTY Auto - Ultimate Edition
 // @namespace    https://github.com/DdepRest/wparty-auto-
-// @version      6.2.0
+// @version      6.3.0
 // @description  Автопереключение серий, умный пропуск титров, статистика с графиками
 // @author       DdepRest
 // @license      MIT
@@ -62,18 +62,21 @@
 
     const CHECK_INTERVAL = 1000;
     const WATCH_TIME_INTERVAL = 10000;
+    const VOLUME_CHECK_INTERVAL = 2000;
     const TRUSTED_ORIGINS = ['wparty.net', 'stloadi.live'];
 
     const VERSION_INFO = {
-        current: '6.2.0',
+        current: '6.3.0',
         releaseDate: '2025-01-27',
-        changelog: 'Удалены функции качества видео и скорости плеера'
+        changelog: 'Исправлено восстановление громкости после сброса сайтом'
     };
 
     // ============ СОСТОЯНИЕ ============
     let hasTriggered = false;
     let progressInterval = null;
     let watchTimeInterval = null;
+    let volumeCheckInterval = null;
+    let volumeObserver = null;
     let settings = {};
     let currentShowId = null;
     let showListOpen = false;
@@ -82,7 +85,9 @@
     const volumeState = {
         userIntentionallyMuted: false,
         volumeChannel: null,
-        hookedElements: new WeakMap()
+        hookedElements: new WeakMap(),
+        isApplying: false,
+        lastUserVolume: 0.5
     };
 
     // ============ УТИЛИТЫ ============
@@ -115,6 +120,7 @@
                 loaded[key] = GM_getValue(key, DEFAULTS[key]);
             });
             volumeState.userIntentionallyMuted = GM_getValue('volumeMuteState', false);
+            volumeState.lastUserVolume = GM_getValue('savedVolume', 0.5);
             return loaded;
         } catch(e) {
             log('⚠️ GM_getValue недоступен, используем localStorage');
@@ -137,6 +143,11 @@
     function cleanup() {
         if (progressInterval) clearInterval(progressInterval);
         if (watchTimeInterval) clearInterval(watchTimeInterval);
+        if (volumeCheckInterval) clearInterval(volumeCheckInterval);
+        if (volumeObserver) {
+            volumeObserver.disconnect();
+            volumeObserver = null;
+        }
         if (volumeState.volumeChannel) {
             try { volumeState.volumeChannel.close(); } catch(e) {}
         }
@@ -201,6 +212,7 @@
     function saveVolume(vol) {
         if (!settings.volumeControl) return;
         vol = clamp01(vol);
+        volumeState.lastUserVolume = vol;
         try {
             GM_setValue('savedVolume', vol);
         } catch(e) {}
@@ -214,25 +226,97 @@
         return document.querySelector('input[data-allplay="volume"]');
     }
 
-    function applyVolume() {
+    function findMuteButton() {
+        return document.querySelector('button[data-allplay="mute"]');
+    }
+
+    function applyVolume(showOSD = true) {
         if (!settings.volumeControl) return;
+        if (volumeState.isApplying) return;
+
+        volumeState.isApplying = true;
 
         const video = findVideo();
         const slider = findVolumeSlider();
+        const muteBtn = findMuteButton();
         const savedVol = getSavedVolume();
 
+        log(`🔊 Применяю громкость: ${Math.round(savedVol * 100)}%`);
+
+        // Устанавливаем громкость видео
         if (video) {
             video.volume = savedVol;
             video.muted = volumeState.userIntentionallyMuted;
         }
 
+        // Обновляем слайдер полностью
         if (slider) {
+            const percent = savedVol * 100;
+
+            // Устанавливаем value
             slider.value = savedVol;
-            slider.setAttribute('aria-valuenow', Math.round(savedVol * 100));
+
+            // Обновляем ARIA атрибуты
+            slider.setAttribute('aria-valuenow', Math.round(percent));
+            slider.setAttribute('aria-valuetext', `${percent.toFixed(1)}%`);
+
+            // Обновляем CSS переменную для визуального отображения
+            slider.style.setProperty('--value', `${percent}%`);
+
+            // Триггерим событие input для уведомления плеера
+            const inputEvent = new Event('input', { bubbles: true });
+            slider.dispatchEvent(inputEvent);
+
+            // Также триггерим change
+            const changeEvent = new Event('change', { bubbles: true });
+            slider.dispatchEvent(changeEvent);
         }
 
-        if (settings.volumeOSD) {
+        // Обновляем кнопку mute
+        if (muteBtn) {
+            const isMuted = volumeState.userIntentionallyMuted || savedVol < 0.01;
+
+            if (isMuted) {
+                muteBtn.classList.add('allplay__control--pressed');
+                muteBtn.setAttribute('aria-pressed', 'true');
+            } else {
+                muteBtn.classList.remove('allplay__control--pressed');
+                muteBtn.setAttribute('aria-pressed', 'false');
+            }
+        }
+
+        if (showOSD && settings.volumeOSD) {
             showVolumeOSD(savedVol);
+        }
+
+        // Снимаем флаг через небольшую задержку
+        setTimeout(() => {
+            volumeState.isApplying = false;
+        }, 150);
+    }
+
+    function checkAndRestoreVolume() {
+        if (!settings.volumeControl) return;
+        if (volumeState.isApplying) return;
+        if (volumeState.userIntentionallyMuted) return;
+
+        const slider = findVolumeSlider();
+        const video = findVideo();
+        const savedVol = getSavedVolume();
+
+        if (!slider && !video) return;
+
+        const currentSliderVol = slider ? parseFloat(slider.value) : null;
+        const currentVideoVol = video ? video.volume : null;
+
+        // Если громкость была сброшена сайтом (стала 0 или близка к 0, а сохранённая > 0)
+        const sliderReset = currentSliderVol !== null && currentSliderVol < 0.02 && savedVol >= 0.02;
+        const videoReset = currentVideoVol !== null && currentVideoVol < 0.02 && savedVol >= 0.02;
+        const videoMuted = video && video.muted && !volumeState.userIntentionallyMuted;
+
+        if (sliderReset || videoReset || videoMuted) {
+            log('⚠️ Обнаружен сброс громкости сайтом, восстанавливаю...');
+            applyVolume(true);
         }
     }
 
@@ -279,21 +363,104 @@
         if (!settings.volumeControl) return;
 
         const slider = findVolumeSlider();
+        const video = findVideo();
+        const muteBtn = findMuteButton();
+
+        // Обработчик слайдера
         if (slider && !volumeState.hookedElements.has(slider)) {
             volumeState.hookedElements.set(slider, true);
-            slider.addEventListener('input', () => {
-                const vol = parseFloat(slider.value);
-                saveVolume(vol);
-                applyVolume();
+
+            // Пользователь меняет громкость
+            slider.addEventListener('input', (e) => {
+                // Проверяем, что это действие пользователя, а не наш скрипт
+                if (e.isTrusted && !volumeState.isApplying) {
+                    const vol = parseFloat(slider.value);
+                    volumeState.userIntentionallyMuted = vol < 0.01;
+                    saveVolume(vol);
+
+                    if (settings.volumeOSD) {
+                        showVolumeOSD(vol);
+                    }
+
+                    log(`👆 Пользователь изменил громкость: ${Math.round(vol * 100)}%`);
+                }
             });
+
+            // MutationObserver для отслеживания изменений атрибутов
+            if (!volumeObserver) {
+                volumeObserver = new MutationObserver((mutations) => {
+                    if (volumeState.isApplying) return;
+
+                    for (const mutation of mutations) {
+                        if (mutation.type === 'attributes') {
+                            const attrName = mutation.attributeName;
+                            if (attrName === 'aria-valuenow' || attrName === 'value' || attrName === 'style') {
+                                // Проверяем через небольшую задержку
+                                setTimeout(checkAndRestoreVolume, 50);
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                volumeObserver.observe(slider, {
+                    attributes: true,
+                    attributeFilter: ['value', 'aria-valuenow', 'style']
+                });
+
+                log('👀 MutationObserver для слайдера громкости активирован');
+            }
         }
 
-        const video = findVideo();
+        // Обработчик видео
         if (video && !volumeState.hookedElements.has(video)) {
             volumeState.hookedElements.set(video, true);
-            video.addEventListener('volumechange', () => {
-                saveVolume(video.volume);
+
+            video.addEventListener('volumechange', (e) => {
+                if (volumeState.isApplying) return;
+
+                // Если громкость изменилась НЕ на 0, сохраняем её
+                if (video.volume > 0.01 && !video.muted) {
+                    saveVolume(video.volume);
+                }
+                // Если сброшена на 0 или замьючена, проверяем нужно ли восстановить
+                else if (!volumeState.userIntentionallyMuted) {
+                    setTimeout(checkAndRestoreVolume, 100);
+                }
             });
+
+            log('🎬 Слушатель volumechange для video активирован');
+        }
+
+        // Обработчик кнопки mute
+        if (muteBtn && !volumeState.hookedElements.has(muteBtn)) {
+            volumeState.hookedElements.set(muteBtn, true);
+
+            muteBtn.addEventListener('click', (e) => {
+                if (e.isTrusted) {
+                    // Пользователь нажал кнопку mute
+                    volumeState.userIntentionallyMuted = !volumeState.userIntentionallyMuted;
+
+                    try {
+                        GM_setValue('volumeMuteState', volumeState.userIntentionallyMuted);
+                    } catch(e) {}
+
+                    log(`🔇 Пользователь ${volumeState.userIntentionallyMuted ? 'выключил' : 'включил'} звук`);
+
+                    // Если пользователь включил звук, восстанавливаем громкость
+                    if (!volumeState.userIntentionallyMuted) {
+                        setTimeout(() => applyVolume(true), 100);
+                    }
+                }
+            });
+
+            log('🔘 Слушатель клика для кнопки mute активирован');
+        }
+
+        // Периодическая проверка громкости
+        if (!volumeCheckInterval) {
+            volumeCheckInterval = setInterval(checkAndRestoreVolume, VOLUME_CHECK_INTERVAL);
+            log(`⏰ Периодическая проверка громкости каждые ${VOLUME_CHECK_INTERVAL}мс`);
         }
     }
 
@@ -303,7 +470,7 @@
             volumeState.volumeChannel = new BroadcastChannel('wparty-volume-sync');
             volumeState.volumeChannel.onmessage = (e) => {
                 if (e.data?.type === 'volume-change') {
-                    applyVolume();
+                    applyVolume(false);
                 }
             };
         } catch(e) {}
@@ -1263,10 +1430,26 @@
         }
 
         if (settings.volumeControl) {
+            // Первичное применение громкости с задержкой
             setTimeout(() => {
                 hookVolumeControls();
-                applyVolume();
+                applyVolume(true);
             }, 1000);
+
+            // Повторное применение через 2 секунды (на случай если плеер загружается медленно)
+            setTimeout(() => {
+                applyVolume(false);
+            }, 2000);
+
+            // Ещё раз через 4 секунды
+            setTimeout(() => {
+                applyVolume(false);
+            }, 4000);
+
+            // И финально через 6 секунд
+            setTimeout(() => {
+                applyVolume(false);
+            }, 6000);
         }
 
         log('✅ Мониторинг запущен');
@@ -1395,7 +1578,7 @@
         settings = loadSettings();
 
         log(`=== СТАРТ ===`);
-        log(`⚙️ Авто: ${settings.autoNext}, Титры: ${settings.skipCredits}`);
+        log(`⚙️ Авто: ${settings.autoNext}, Титры: ${settings.skipCredits}, Громкость: ${settings.volumeControl}`);
 
         injectStyles();
         window.addEventListener('beforeunload', cleanup);
