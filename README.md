@@ -1,9 +1,9 @@
 # 🎬 WPARTY Auto — Ultimate Edition
 
-![Version](https://img.shields.io/badge/version-7.0.0-blue)
+![Version](https://img.shields.io/badge/version-10.0.4-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Tampermonkey](https://img.shields.io/badge/Tampermonkey-4.0+-orange)
-![Last Update](https://img.shields.io/badge/updated-2025--01--27-brightgreen)
+![Last Update](https://img.shields.io/badge/updated-2026--02--03-brightgreen)
 
 Автоматически переключает серии на [WPARTY.net](https://wparty.net) с умным пропуском титров, статистикой просмотра и графиками.
 
@@ -126,6 +126,13 @@
 Для ручной проверки: **Tampermonkey → Утилиты → Проверить обновления**
 
 ## 📝 Changelog
+
+### v10.0.4 (2026-02-03)
+
+#### 🔄 Обновлено
+- Актуализация версии скрипта до 10.0.4
+
+---
 
 ### v7.0.0 (2025-01-27)
 

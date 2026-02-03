@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WPARTY Auto - Ultimate Edition
 // @namespace    https://github.com/DdepRest/wparty-auto-
-// @version      7.0.0
+// @version      10.0.4
 // @description  Автопереключение серий, умный пропуск титров, статистика с графиками
 // @author       DdepRest
 // @license      MIT
@@ -33,8 +33,8 @@
     // ═══════════════════════════════════════════════════════════
 
     const CONFIG = {
-        version: '7.0.0',
-        releaseDate: '2025-01-27',
+        version: '10.0.4',
+        releaseDate: '2026-02-03',
         intervals: { check: 1000, watchTime: 10000, volumeCheck: 2000 },
         trustedOrigins: ['wparty.net', 'stloadi.live'],
         defaults: {
