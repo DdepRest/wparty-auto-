@@ -1,6 +1,6 @@
 # 🎬 WPARTY Auto — Ultimate Edition
 
-![Version](https://img.shields.io/badge/version-7.0.0-blue)
+![Version](https://img.shields.io/badge/version-10.0.4-red)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Tampermonkey](https://img.shields.io/badge/Tampermonkey-4.0+-orange)
 ![Last Update](https://img.shields.io/badge/updated-2025--01--27-brightgreen)
