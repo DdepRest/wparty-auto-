@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         WPARTY Auto - Ultimate Edition
+// @name         WPARTY Auto - Redesign Edition (Fixed Min)
 // @namespace    https://github.com/DdepRest/wparty-auto-
 // @version      10.0.4
 // @description  Автопереключение серий, умный пропуск титров, статистика с графиками
