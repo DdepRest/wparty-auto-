@@ -65,13 +65,13 @@
 
 ### Шаг 2: Установите скрипт
 
-**[⬇️ Нажмите для установки (GitHub)](https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/WPARTY-Auto-Redesign-Edition-Fixed-Min.user.js)**
+**[⬇️ Нажмите для установки (GitHub)](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js)**
 
-**[⬇️ Альтернативная ссылка (GitHub)](https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/WPARTY-Auto-Redesign-Edition-Fixed-Min.user.js)**
+**[⬇️ Альтернативная ссылка (GitHub)](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js)**
 
 Или вручную:
 1. Откройте Tampermonkey → **Создать новый скрипт**
-2. Замените весь код на содержимое [WPARTY-Auto-Redesign-Edition-Fixed-Min.user.js](https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/WPARTY-Auto-Redesign-Edition-Fixed-Min.user.js)
+2. Замените весь код на содержимое [wparty-auto.user.js](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js)
 3. Сохраните **(Ctrl+S)**
 
 ## 🎮 Использование
@@ -120,7 +120,7 @@
 ## 🔄 Обновления
 
 Скрипт автоматически проверяет наличие обновлений через Tampermonkey.
-- **Update URL**: https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/WPARTY-Auto-Redesign-Edition-Fixed-Min.user.js
+- **Update URL**: https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
 - Для ручной проверки: Tampermonkey → Утилиты → Проверить обновления
 
 ## 📝 Журнал изменений
@@ -223,6 +223,6 @@ SOFTWARE.
 
 ⭐ **Если скрипт помогает вам в просмотре сериалов — поставьте звезду на GitHub!** ⭐
 
-**[📥 Установить скрипт](https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/WPARTY-Auto-Redesign-Edition-Fixed-Min.user.js)** • **[🐛 Сообщить о проблеме](https://github.com/DdepRest/wparty-auto-redesign/issues)** • **[🐙 GitHub](https://github.com/DdepRest/wparty-auto-redesign)**
+**[📥 Установить скрипт](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js)** • **[🐛 Сообщить о проблеме](https://github.com/DdepRest/wparty-auto-/issues)** • **[🐙 GitHub](https://github.com/DdepRest/wparty-auto-)**
 
 </div>
