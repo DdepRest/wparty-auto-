@@ -321,7 +321,7 @@ git push origin feature/your-feature
 | 🐛 **Сообщить об ошибке** | [GitHub Issues](https://github.com/DdepRest/wparty-auto-redesign/issues) | Баги и проблемы |
 | 💬 **Обсуждение** | [Discussions](https://github.com/DdepRest/wparty-auto-redesign/discussions) | Вопросы и идеи |
 | 📖 **Документация** | [Wiki](https://github.com/DdepRest/wparty-auto-redesign/wiki) | Подробные руководства |
-| 📥 **Установить скрипт** | [Direct Link](https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/wparty-auto.user.js) | Последняя версия |
+| 📥 **Установить скрипт** | [Direct Link](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js) | Последняя версия |
 
 ---
 
