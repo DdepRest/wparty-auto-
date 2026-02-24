@@ -1529,7 +1529,7 @@ const Credits = {
 };
 // ═══════════════════════════════════════════════════════════
 // СТИЛИ (ПОЛНАЯ ВЕ������СИЯ)
-// ═══════�����═══════════════════════�������═══════════════════════════
+// ═══════�����═══════════════════════�������������═══════════════════════════
 const injectStyles = () => {
     const css = `
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
@@ -3279,8 +3279,8 @@ const Panel = {
     ${this.getSettingsTabHTML(s)}
 </div>
 <div class="wpa-panel__footer">
-    <a href="https://github.com/DdepRest/wparty-auto-redesign" target="_blank" class="wpa-footer-link">${Icons.github}<span>GitHub</span></a>
-    <a href="https://github.com/DdepRest/wparty-auto-redesign/issues" target="_blank" class="wpa-footer-link">${Icons.externalLink}<span>Поддержка</span></a>
+    <a href="https://github.com/DdepRest/wparty-auto-" target="_blank" class="wpa-footer-link">${Icons.github}<span>GitHub</span></a>
+    <a href="https://github.com/DdepRest/wparty-auto-/issues" target="_blank" class="wpa-footer-link">${Icons.externalLink}<span>Поддержка</span></a>
 </div>`;
     },
 
