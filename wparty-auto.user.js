@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WPARTY Auto - Mobile Optimized Edition
 // @namespace    https://github.com/DdepRest/wparty-auto-
-// @version      11.3.0
+// @version      11.4.0
 // @description  Реструктурированная вкладка "Автоматика" + оптимизация + защита от ошибок
 // @author       DdepRest
 // @license      MIT
@@ -26,7 +26,7 @@
 // ==/UserScript==
 
 /**
- * WPARTY Auto - Mobile Optimized Edition (v11.3.0)
+ * WPARTY Auto - Mobile Optimized Edition (v11.4.0)
  * Реструктурированная вкладка "Автоматика" + оптимизация + защита от ошибок
  */
 
@@ -46,8 +46,8 @@ const IS_PLAYER = window.location.hostname.includes('stloadi.live');
 // КОНФИГУРАЦИЯ СКРИПТА
 // ═══════════════════════════════════════════════════════════
 const CONFIG = {
-    version: '11.0.0',
-    releaseDate: '2026-02-24',
+    version: '11.4.0',
+    releaseDate: '2026-02-25',
 
     intervals: {
         check: 1500,          // Увеличено с 1000 для снижения нагрузки
@@ -1529,7 +1529,7 @@ const Credits = {
 };
 // ═══════════════════════════════════════════════════════════
 // СТИЛИ (ПОЛНАЯ ВЕ������СИЯ)
-// ═══════�����═══════════════════════���═══════════════════════════
+// ═══════�����═══════════════════════�������═══════════════════════════
 const injectStyles = () => {
     const css = `
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
