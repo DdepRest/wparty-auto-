@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         WPARTY Auto - Mobile Optimized Edition
-// @namespace    https://github.com/DdepRest/wparty-auto-redesign
+// @namespace    https://github.com/DdepRest/wparty-auto-
 // @version      11.3.0
 // @description  Реструктурированная вкладка "Автоматика" + оптимизация + защита от ошибок
 // @author       DdepRest
@@ -18,10 +18,10 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_addStyle
 // @connect      raw.githubusercontent.com
-// @updateURL    https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/wparty-auto-redesign.user.js
-// @downloadURL  https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/wparty-auto-redesign.user.js
-// @supportURL   https://github.com/DdepRest/wparty-auto-redesign/issues
-// @homepageURL  https://github.com/DdepRest/wparty-auto-redesign
+// @updateURL    https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
+// @downloadURL  https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js
+// @supportURL   https://github.com/DdepRest/wparty-auto-/issues
+// @homepageURL  https://github.com/DdepRest/wparty-auto-
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=wparty.net
 // ==/UserScript==
 
@@ -1529,7 +1529,7 @@ const Credits = {
 };
 // ═══════════════════════════════════════════════════════════
 // СТИЛИ (ПОЛНАЯ ВЕ������СИЯ)
-// ═══════�����═══════════════════════════════════════════════════
+// ═══════�����═══════════════════════���═══════════════════════════
 const injectStyles = () => {
     const css = `
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
