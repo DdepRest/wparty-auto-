@@ -381,6 +381,6 @@ SOFTWARE.
 
 ---
 
-[📥 Установить скрипт](https://raw.githubusercontent.com/DdepRest/wparty-auto-redesign/main/wparty-auto.user.js) • [🐛 Сообщить о проблеме](https://github.com/DdepRest/wparty-auto-redesign/issues) • [🐙 GitHub](https://github.com/DdepRest/wparty-auto-redesign)
+[📥 Установить скрипт](https://raw.githubusercontent.com/DdepRest/wparty-auto-/main/wparty-auto.user.js) • [🐛 Сообщить о проблеме](https://github.com/DdepRest/wparty-auto-redesign/issues) • [🐙 GitHub](https://github.com/DdepRest/wparty-auto-redesign)
 
 ---
